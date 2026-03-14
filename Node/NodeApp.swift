@@ -5,8 +5,10 @@
 //  Created by Sjors Provoost on 14/03/2026.
 //
 
-import AppKit
 import SwiftUI
+
+#if os(macOS)
+import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var terminationHandler: (@MainActor () async -> Void)?
@@ -31,20 +33,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
 }
+#endif
 
 @main
 struct NodeApp: App {
+    #if os(macOS)
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    #endif
     @State private var viewModel = NodeViewModel()
 
     var body: some Scene {
+        WindowGroup {
+            ContentView(viewModel: viewModel)
+                .onAppear(perform: configurePlatformHooks)
+        }
+    }
+
+    private func configurePlatformHooks() {
+        #if os(macOS)
         let viewModel = viewModel
         appDelegate.terminationHandler = { [viewModel] in
             await viewModel.prepareForTermination()
         }
-
-        return WindowGroup {
-            ContentView(viewModel: viewModel)
-        }
+        #endif
     }
 }

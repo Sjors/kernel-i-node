@@ -15,12 +15,30 @@ struct ContentView: View {
             Text("Signet Kernel Sync")
                 .font(.title.bold())
 
+            LabeledContent {
+                Button(action: viewModel.toggleSync) {
+                    Label(viewModel.isSyncEnabled ? "On" : "Off",
+                          systemImage: viewModel.isSyncEnabled ? "largecircle.fill.circle" : "circle")
+                }
+                .buttonStyle(.plain)
+            } label: {
+                Text("Sync")
+            }
+
             ProgressView(value: viewModel.snapshot.progressFraction)
                 .progressViewStyle(.linear)
 
             LabeledContent("Progress", value: progressLabel)
             LabeledContent("Height", value: "\(viewModel.snapshot.localHeight) / \(viewModel.snapshot.remoteHeight)")
-            LabeledContent("Tip Hash", value: tipHashLabel)
+            LabeledContent {
+                Text(tipHashLabel)
+                    .font(.callout.monospaced())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.45)
+                    .allowsTightening(true)
+            } label: {
+                Text("Tip Hash")
+            }
 
             if case .failed(let message) = viewModel.snapshot.phase {
                 Text(message)
@@ -36,7 +54,11 @@ struct ContentView: View {
 
         }
         .padding(24)
+        #if os(macOS)
         .frame(minWidth: 620, minHeight: 280, alignment: .topLeading)
+        #else
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        #endif
         .task {
             viewModel.startIfNeeded()
         }

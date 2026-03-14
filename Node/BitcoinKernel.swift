@@ -11,6 +11,7 @@ enum BitcoinKernelError: LocalizedError {
     case libraryNotFound([String])
     case libraryOpenFailed(String)
     case symbolMissing(String)
+    case unsupportedPlatform
     case chainParametersCreationFailed
     case contextOptionsCreationFailed
     case contextCreationFailed
@@ -32,6 +33,8 @@ enum BitcoinKernelError: LocalizedError {
             return "Failed to open libbitcoinkernel: \(message)"
         case .symbolMissing(let symbol):
             return "Missing libbitcoinkernel symbol: \(symbol)"
+        case .unsupportedPlatform:
+            return "Kernel sync is currently supported on macOS and iPhone Simulator only."
         case .chainParametersCreationFailed:
             return "Failed to create signet chain parameters."
         case .contextOptionsCreationFailed:
@@ -65,6 +68,14 @@ final class BitcoinKernel {
     private let library: LoadedBitcoinKernel
     private let context: OpaquePointer
     private let chainstateManager: OpaquePointer
+
+    static var isSupportedOnCurrentPlatform: Bool {
+        #if os(macOS) || (os(iOS) && targetEnvironment(simulator))
+        true
+        #else
+        false
+        #endif
+    }
 
     init(storageRoot: URL) throws {
         do {

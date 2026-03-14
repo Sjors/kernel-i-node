@@ -36,8 +36,10 @@ final class NodeViewModel {
     private static let logger = Logger(subsystem: "nl.sprovoost.Node", category: "NodeViewModel")
     private let syncEngine: NodeSyncEngine
     private var syncTask: Task<Void, Never>?
+    private var isReconcilingSync = false
 
     var snapshot = SyncSnapshot()
+    var isSyncEnabled = true
 
     init(syncEngine: NodeSyncEngine? = nil) {
         self.syncEngine = syncEngine ?? NodeSyncEngine()
@@ -48,16 +50,44 @@ final class NodeViewModel {
     }
 
     func startIfNeeded() {
-        guard syncTask == nil else { return }
-        start()
+        Task { await reconcileSyncState() }
     }
 
     func prepareForTermination() async {
-        guard let syncTask else { return }
+        isSyncEnabled = false
+        await reconcileSyncState()
+    }
 
-        syncTask.cancel()
-        await syncTask.value
-        self.syncTask = nil
+    func toggleSync() {
+        isSyncEnabled.toggle()
+        Task { await reconcileSyncState() }
+    }
+
+    private func reconcileSyncState() async {
+        guard !isReconcilingSync else { return }
+
+        isReconcilingSync = true
+        defer { isReconcilingSync = false }
+
+        while true {
+            if isSyncEnabled {
+                if syncTask == nil {
+                    start()
+                }
+                return
+            }
+
+            if let syncTask {
+                syncTask.cancel()
+                await syncTask.value
+                self.syncTask = nil
+                markSyncStopped()
+                continue
+            }
+
+            markSyncStopped()
+            return
+        }
     }
 
     private func start() {
@@ -91,6 +121,12 @@ final class NodeViewModel {
         snapshot.statusText = "Sync failed"
     }
 
+    private func markSyncStopped() {
+        guard !snapshot.isComplete else { return }
+        snapshot.phase = .idle
+        snapshot.statusText = "Sync stopped"
+    }
+
     private func markFinished() {
         syncTask = nil
     }
@@ -111,6 +147,10 @@ struct NodeSyncEngine {
     func run(update: @escaping @Sendable (SyncSnapshot) async -> Void) async throws {
         var snapshot = SyncSnapshot(phase: .preparing, statusText: "Opening kernel", localHeight: 0, remoteHeight: 0, tipHash: "")
         await update(snapshot)
+
+        guard BitcoinKernel.isSupportedOnCurrentPlatform else {
+            throw BitcoinKernelError.unsupportedPlatform
+        }
 
         let kernel = try BitcoinKernel(storageRoot: storageRoot)
         let remoteHeight = try await client.fetchTipHeight()
