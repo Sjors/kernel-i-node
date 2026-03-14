@@ -2,3 +2,4 @@ bitcoin-core
 build*
 local
 *.xcuserdatad/
+Config/Node.local.xcconfig

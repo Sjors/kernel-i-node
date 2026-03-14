@@ -25,6 +25,7 @@
 
 /* Begin PBXFileReference section */
 		A24046F42F65D45E00ED0CB7 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		A2C000012F66100000344857 /* Node.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Node.xcconfig; sourceTree = "<group>"; };
 		A285214E2F65BEE200344857 /* Node.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Node.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A285215B2F65BEE300344857 /* NodeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NodeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A28521652F65BEE300344857 /* NodeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NodeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -76,12 +77,21 @@
 		A28521452F65BEE200344857 = {
 			isa = PBXGroup;
 			children = (
+				A2C000022F66100000344857 /* Config */,
 				A28521502F65BEE200344857 /* Node */,
 				A285215E2F65BEE300344857 /* NodeTests */,
 				A28521682F65BEE300344857 /* NodeUITests */,
 				A285214F2F65BEE200344857 /* Products */,
 				A24046F42F65D45E00ED0CB7 /* README.md */,
 			);
+			sourceTree = "<group>";
+		};
+		A2C000022F66100000344857 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				A2C000012F66100000344857 /* Node.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 		A285214F2F65BEE200344857 /* Products */ = {
@@ -412,6 +422,7 @@
 		};
 		A28521702F65BEE300344857 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A2C000012F66100000344857 /* Node.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -454,6 +465,7 @@
 		};
 		A28521712F65BEE300344857 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A2C000012F66100000344857 /* Node.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;

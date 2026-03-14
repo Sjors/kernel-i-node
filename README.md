@@ -190,6 +190,8 @@ This avoids the sandbox issues you get when trying to `dlopen` a dylib directly 
 
 For iPhone builds you will also need normal Xcode signing and provisioning for your device.
 
+Local signing settings should go in `Config/Node.local.xcconfig`, which is ignored by git and included from the tracked `Config/Node.xcconfig`. Do not commit your personal `DEVELOPMENT_TEAM` or other machine-specific signing overrides to `Node.xcodeproj/project.pbxproj`.
+
 ## Notes
 
 - This app uses `https://mempool.space/signet/api` as a block source.
