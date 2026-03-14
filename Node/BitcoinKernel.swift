@@ -311,7 +311,7 @@ private final class LoadedBitcoinKernel {
     func hexString(for blockHash: OpaquePointer) -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
         btck_block_hash_to_bytes(blockHash, &bytes)
-        return bytes.map { String(format: "%02x", $0) }.joined()
+        return bytes.reversed().map { String(format: "%02x", $0) }.joined()
     }
     private static func candidateLibraryPaths() -> [String] {
         let environment = ProcessInfo.processInfo.environment

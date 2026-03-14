@@ -30,14 +30,17 @@ struct ContentView: View {
 
             LabeledContent("Progress", value: progressLabel)
             LabeledContent("Height", value: "\(viewModel.snapshot.localHeight) / \(viewModel.snapshot.remoteHeight)")
-            LabeledContent {
-                Text(tipHashLabel)
-                    .font(.callout.monospaced())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
-            } label: {
-                Text("Tip Hash")
+            ViewThatFits {
+                LabeledContent {
+                    tipHashText
+                } label: {
+                    Text("Tip Hash")
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Tip Hash")
+                    tipHashText
+                }
             }
 
             if case .failed(let message) = viewModel.snapshot.phase {
@@ -74,6 +77,14 @@ struct ContentView: View {
             return "Unavailable"
         }
         return viewModel.snapshot.tipHash
+    }
+
+    private var tipHashText: some View {
+        Text(tipHashLabel)
+            .font(.callout.monospaced())
+            .lineLimit(1)
+            .minimumScaleFactor(0.45)
+            .allowsTightening(true)
     }
 }
 
