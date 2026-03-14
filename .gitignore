@@ -1,0 +1,4 @@
+bitcoin-core
+build*
+local
+*.xcuserdatad/
