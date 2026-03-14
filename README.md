@@ -1,6 +1,6 @@
 # Node
 
-This project is a SwiftUI proof of concept for feeding signet blocks from mempool.space into `libbitcoinkernel`.
+This project is a SwiftUI proof of concept for feeding signet blocks from mempool.space into [`libbitcoinkernel`](https://github.com/bitcoin/bitcoin/issues/27587).
 
 ![Node app screenshot](screenshot.png)
 
@@ -34,7 +34,7 @@ Optional:
 
 ## Clone Bitcoin Core
 
-Clone upstream Bitcoin Core into `bitcoin-core` in this repository root:
+Clone upstream [Bitcoin Core](https://github.com/bitcoin/bitcoin) into `bitcoin-core` in this repository root:
 
 ```sh
 git clone https://github.com/bitcoin/bitcoin.git bitcoin-core
@@ -52,7 +52,7 @@ If `./bitcoin-core` is missing, the Xcode build fails immediately with a clear e
 
 Open `Node.xcodeproj` in Xcode and build/run the `Node` target.
 
-During the build, Xcode calls [embed-libbitcoinkernel.sh](/Users/sjors/dev/Node/scripts/embed-libbitcoinkernel.sh), which in turn uses [build-libbitcoinkernel.sh](/Users/sjors/dev/Node/scripts/build-libbitcoinkernel.sh) to:
+During the build, Xcode calls [embed-libbitcoinkernel.sh](scripts/embed-libbitcoinkernel.sh), which in turn uses [build-libbitcoinkernel.sh](scripts/build-libbitcoinkernel.sh) to:
 
 - configures a kernel-only Bitcoin Core build for the current platform
 - builds `libbitcoinkernel`
@@ -65,12 +65,12 @@ Because those kernel build artifacts now live under DerivedData, `Product > Clea
 
 ## Manual Build
 
-If you want to inspect the Xcode build helpers, see [embed-libbitcoinkernel.sh](/Users/sjors/dev/Node/scripts/embed-libbitcoinkernel.sh) and [build-libbitcoinkernel.sh](/Users/sjors/dev/Node/scripts/build-libbitcoinkernel.sh).
+If you want to inspect the Xcode build helpers, see [embed-libbitcoinkernel.sh](scripts/embed-libbitcoinkernel.sh) and [build-libbitcoinkernel.sh](scripts/build-libbitcoinkernel.sh).
 
 Local signing settings should go in `Config/Node.local.xcconfig`, which is ignored by git and included from the tracked `Config/Node.xcconfig`. Do not commit your personal `DEVELOPMENT_TEAM` or other machine-specific signing overrides to `Node.xcodeproj/project.pbxproj`.
 
 ## Notes
 
-- This app uses `https://mempool.space/signet/api` as a block source.
+- This app uses [`mempool.space`](https://mempool.space/signet) as a block source.
 - This is not a full P2P node. `libbitcoinkernel` validates and stores blocks, while block download is done externally.
 - The `libbitcoinkernel` API is experimental and may change as Bitcoin Core evolves.
