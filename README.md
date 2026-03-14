@@ -8,11 +8,7 @@ The Xcode build automatically configures, builds, installs, and embeds the right
 
 ## Prerequisites
 
-Install Homebrew first:
-
-```sh
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-```
+Install [Homebrew](https://brew.sh) first.
 
 Then install the build tools and the non-IPC dependencies used by the kernel build:
 
@@ -22,7 +18,6 @@ brew install cmake ninja boost pkgconf
 
 Required tools and packages:
 
-- Homebrew
 - `cmake`
 - `ninja`
 - `boost`
