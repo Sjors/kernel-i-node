@@ -254,7 +254,6 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
-				"$(SRCROOT)/local/bitcoinkernel/lib/libbitcoinkernel.dylib",
 			);
 			name = "Embed libbitcoinkernel";
 			outputFileListPaths = (
@@ -264,7 +263,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\n\ncase \"${PLATFORM_NAME}\" in\n  macosx)\n    SOURCE_LIB=\"${SRCROOT}/local/bitcoinkernel/lib/libbitcoinkernel.dylib\"\n    ;;\n  iphonesimulator)\n    SOURCE_LIB=\"${SRCROOT}/local/bitcoinkernel-iossim/lib/libbitcoinkernel.dylib\"\n    ;;\n  iphoneos)\n    SOURCE_LIB=\"${SRCROOT}/local/bitcoinkernel-ios/lib/libbitcoinkernel.dylib\"\n    ;;\n  *)\n    echo \"note: Skipping libbitcoinkernel embed for ${PLATFORM_NAME}; kernel sync is currently unsupported on this platform.\"\n    exit 0\n    ;;\nesac\n\nDEST_DIR=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\nDEST_LIB=\"${DEST_DIR}/libbitcoinkernel.dylib\"\n\nif [ ! -f \"$SOURCE_LIB\" ]; then\n  echo \"error: Missing libbitcoinkernel at $SOURCE_LIB. Build the matching local kernel variant first.\" >&2\n  exit 1\nfi\n\nmkdir -p \"$DEST_DIR\"\ncp -f \"$SOURCE_LIB\" \"$DEST_LIB\"\nchmod 755 \"$DEST_LIB\"\n\nif [ -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]; then\n  codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none \"$DEST_LIB\"\nfi\n";
+			shellScript = "/bin/bash \"${SRCROOT}/scripts/embed-libbitcoinkernel.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
