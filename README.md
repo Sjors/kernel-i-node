@@ -28,7 +28,9 @@ Required tools and packages:
 - `boost`
 - `pkgconf`
 
-IPC is not needed; the build script configures Bitcoin Core with `-DENABLE_IPC=OFF`.
+Optional:
+
+- `ccache` to speed up repeated kernel rebuilds
 
 ## Clone Bitcoin Core
 

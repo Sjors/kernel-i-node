@@ -53,6 +53,12 @@ brew_bin="$(resolve_command brew "Install Homebrew first from https://brew.sh/."
 cmake_bin="$(resolve_command cmake "Install it first, for example with 'brew install cmake'.")"
 ninja_bin="$(resolve_command ninja "Install it first, for example with 'brew install ninja'.")"
 
+if command -v ccache >/dev/null 2>&1; then
+  with_ccache=ON
+else
+  with_ccache=OFF
+fi
+
 if [[ ! -d "${bitcoin_core_dir}" ]]; then
   echo "error: Missing bitcoin-core checkout at ${bitcoin_core_dir}. Clone or symlink Bitcoin Core there before building." >&2
   exit 1
@@ -156,7 +162,7 @@ step="configuring Bitcoin Core kernel build"
   -DENABLE_WALLET=OFF \
   -DWITH_ZMQ=OFF \
   -DBUILD_BENCH=OFF \
-  -DWITH_CCACHE=OFF
+  "-DWITH_CCACHE=${with_ccache}"
 
 step="building libbitcoinkernel"
 "${cmake_bin}" --build "${build_dir}" --target bitcoinkernel -j4
