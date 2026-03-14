@@ -34,7 +34,7 @@ enum BitcoinKernelError: LocalizedError {
         case .symbolMissing(let symbol):
             return "Missing libbitcoinkernel symbol: \(symbol)"
         case .unsupportedPlatform:
-            return "Kernel sync is currently supported on macOS and iPhone Simulator only."
+            return "Kernel sync is currently supported on macOS and iOS."
         case .chainParametersCreationFailed:
             return "Failed to create signet chain parameters."
         case .contextOptionsCreationFailed:
@@ -70,7 +70,7 @@ final class BitcoinKernel {
     private let chainstateManager: OpaquePointer
 
     static var isSupportedOnCurrentPlatform: Bool {
-        #if os(macOS) || (os(iOS) && targetEnvironment(simulator))
+        #if os(macOS) || os(iOS)
         true
         #else
         false

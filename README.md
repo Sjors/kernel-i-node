@@ -12,6 +12,10 @@ For iPhone Simulator builds it instead expects:
 
 `./local/bitcoinkernel-iossim/lib/libbitcoinkernel.dylib`
 
+For iPhone device builds it instead expects:
+
+`./local/bitcoinkernel-ios/lib/libbitcoinkernel.dylib`
+
 The Xcode project embeds the matching dylib into the app bundle at build time. You do not need to set `BTCK_LIB_PATH` if the local kernel has been built in the expected location.
 
 ## Prerequisites
@@ -128,6 +132,50 @@ local/bitcoinkernel-iossim/include/bitcoinkernel.h
 local/bitcoinkernel-iossim/lib/pkgconfig/libbitcoinkernel.pc
 ```
 
+## Build libbitcoinkernel For iPhone
+
+The device build uses the iPhoneOS sysroot and installs to a separate prefix:
+
+```sh
+cmake -S bitcoin-core -B build-bitcoinkernel-ios -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX="$PWD/local/bitcoinkernel-ios" \
+  -DCMAKE_SYSTEM_NAME=iOS \
+  -DCMAKE_OSX_SYSROOT=iphoneos \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DBUILD_SHARED_LIBS=ON \
+  -DBUILD_BITCOIN_BIN=OFF \
+  -DBUILD_DAEMON=OFF \
+  -DBUILD_GUI=OFF \
+  -DBUILD_CLI=OFF \
+  -DBUILD_TESTS=OFF \
+  -DBUILD_TX=OFF \
+  -DBUILD_UTIL=OFF \
+  -DBUILD_UTIL_CHAINSTATE=OFF \
+  -DBUILD_KERNEL_LIB=ON \
+  -DBUILD_KERNEL_TEST=OFF \
+  -DENABLE_IPC=OFF \
+  -DENABLE_WALLET=OFF \
+  -DWITH_ZMQ=OFF \
+  -DBUILD_BENCH=OFF \
+  -DWITH_CCACHE=OFF
+```
+
+Build and install the device library:
+
+```sh
+cmake --build build-bitcoinkernel-ios --target bitcoinkernel -j4
+cmake --install build-bitcoinkernel-ios --component libbitcoinkernel
+```
+
+After that, these files should exist:
+
+```text
+local/bitcoinkernel-ios/lib/libbitcoinkernel.dylib
+local/bitcoinkernel-ios/include/bitcoinkernel.h
+local/bitcoinkernel-ios/lib/pkgconfig/libbitcoinkernel.pc
+```
+
 ## Run The App
 
 Open the Xcode project and run the `Node` app target normally.
@@ -136,8 +184,11 @@ During the build, Xcode copies the matching local kernel dylib into the app bund
 
 - macOS: `./local/bitcoinkernel/lib/libbitcoinkernel.dylib`
 - iPhone Simulator: `./local/bitcoinkernel-iossim/lib/libbitcoinkernel.dylib`
+- iPhone: `./local/bitcoinkernel-ios/lib/libbitcoinkernel.dylib`
 
 This avoids the sandbox issues you get when trying to `dlopen` a dylib directly from the project folder. If the required kernel library is missing, the app build should fail with a clear error from the `Embed libbitcoinkernel` build phase.
+
+For iPhone builds you will also need normal Xcode signing and provisioning for your device.
 
 ## Notes
 

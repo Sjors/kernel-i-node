@@ -254,7 +254,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\n\ncase \"${PLATFORM_NAME}\" in\n  macosx)\n    SOURCE_LIB=\"${SRCROOT}/local/bitcoinkernel/lib/libbitcoinkernel.dylib\"\n    ;;\n  iphonesimulator)\n    SOURCE_LIB=\"${SRCROOT}/local/bitcoinkernel-iossim/lib/libbitcoinkernel.dylib\"\n    ;;\n  *)\n    echo \"note: Skipping libbitcoinkernel embed for ${PLATFORM_NAME}; kernel sync is currently unsupported on this platform.\"\n    exit 0\n    ;;\nesac\n\nDEST_DIR=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\nDEST_LIB=\"${DEST_DIR}/libbitcoinkernel.dylib\"\n\nif [ ! -f \"$SOURCE_LIB\" ]; then\n  echo \"error: Missing libbitcoinkernel at $SOURCE_LIB. Build the matching local kernel variant first.\" >&2\n  exit 1\nfi\n\nmkdir -p \"$DEST_DIR\"\ncp -f \"$SOURCE_LIB\" \"$DEST_LIB\"\nchmod 755 \"$DEST_LIB\"\n\nif [ -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]; then\n  codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none \"$DEST_LIB\"\nfi\n";
+			shellScript = "set -euo pipefail\n\ncase \"${PLATFORM_NAME}\" in\n  macosx)\n    SOURCE_LIB=\"${SRCROOT}/local/bitcoinkernel/lib/libbitcoinkernel.dylib\"\n    ;;\n  iphonesimulator)\n    SOURCE_LIB=\"${SRCROOT}/local/bitcoinkernel-iossim/lib/libbitcoinkernel.dylib\"\n    ;;\n  iphoneos)\n    SOURCE_LIB=\"${SRCROOT}/local/bitcoinkernel-ios/lib/libbitcoinkernel.dylib\"\n    ;;\n  *)\n    echo \"note: Skipping libbitcoinkernel embed for ${PLATFORM_NAME}; kernel sync is currently unsupported on this platform.\"\n    exit 0\n    ;;\nesac\n\nDEST_DIR=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\nDEST_LIB=\"${DEST_DIR}/libbitcoinkernel.dylib\"\n\nif [ ! -f \"$SOURCE_LIB\" ]; then\n  echo \"error: Missing libbitcoinkernel at $SOURCE_LIB. Build the matching local kernel variant first.\" >&2\n  exit 1\nfi\n\nmkdir -p \"$DEST_DIR\"\ncp -f \"$SOURCE_LIB\" \"$DEST_LIB\"\nchmod 755 \"$DEST_LIB\"\n\nif [ -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]; then\n  codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none \"$DEST_LIB\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -421,11 +421,15 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
-				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -459,11 +463,15 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
-				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
+				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
