@@ -82,6 +82,11 @@ find_boost_prefix() {
 
 boost_prefix="$(find_boost_prefix || true)"
 boost_args=()
+probe_warning_args=(
+  -Werror=unknown-warning-option
+  -Werror=unused-command-line-argument
+)
+probe_warning_flags="${probe_warning_args[*]}"
 
 if [[ -n "${boost_prefix}" ]]; then
   shopt -s nullglob
@@ -132,6 +137,8 @@ step="configuring Bitcoin Core kernel build"
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="${install_prefix}" \
   -DCMAKE_MAKE_PROGRAM="${ninja_bin}" \
+  "-DCMAKE_C_FLAGS=${probe_warning_flags}" \
+  "-DCMAKE_CXX_FLAGS=${probe_warning_flags}" \
   "${platform_args[@]}" \
   "${boost_args[@]}" \
   -DBUILD_SHARED_LIBS=ON \
