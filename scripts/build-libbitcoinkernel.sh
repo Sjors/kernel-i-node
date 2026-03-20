@@ -145,8 +145,8 @@ step="configuring Bitcoin Core kernel build"
   -DCMAKE_MAKE_PROGRAM="${ninja_bin}" \
   "-DCMAKE_C_FLAGS=${probe_warning_flags}" \
   "-DCMAKE_CXX_FLAGS=${probe_warning_flags}" \
-  "${platform_args[@]}" \
-  "${boost_args[@]}" \
+  "${platform_args[@]+"${platform_args[@]}"}" \
+  "${boost_args[@]+"${boost_args[@]}"}" \
   -DBUILD_SHARED_LIBS=ON \
   -DBUILD_BITCOIN_BIN=OFF \
   -DBUILD_DAEMON=OFF \
