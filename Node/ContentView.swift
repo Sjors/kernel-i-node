@@ -26,6 +26,18 @@ struct ContentView: View {
                 Text("Sync")
             }
 
+            LabeledContent {
+                Button {
+                    viewModel.toggleNetwork()
+                } label: {
+                    Label(viewModel.isNetworkEnabled ? "On" : "Off",
+                          systemImage: viewModel.isNetworkEnabled ? "largecircle.fill.circle" : "circle")
+                }
+                .buttonStyle(.plain)
+            } label: {
+                Text("Network")
+            }
+
             ProgressView(value: viewModel.snapshot.progressFraction)
                 .progressViewStyle(.linear)
 

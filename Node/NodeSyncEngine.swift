@@ -82,6 +82,7 @@ final class NodeViewModel {
 
     var snapshot = SyncSnapshot()
     var isSyncEnabled = true
+    var isNetworkEnabled = true
 
     init(syncEngine: NodeSyncEngine? = nil) {
         self.syncEngine = syncEngine ?? NodeSyncEngine()
@@ -105,6 +106,13 @@ final class NodeViewModel {
         Task { await reconcileSyncState() }
     }
 
+    func toggleNetwork() {
+        isNetworkEnabled.toggle()
+        guard isSyncEnabled else { return }
+        // Restart the running sync so it picks up the new value
+        Task { await restartSync() }
+    }
+
     func refreshKernelLogging() {
         BitcoinKernel.refreshRuntimeLogSettings()
         syncEngine.refreshLoggingSettings()
@@ -116,6 +124,15 @@ final class NodeViewModel {
         snapshot.phase = .preparing
         snapshot.statusText = mode.restartStatusText
         Task { await reconcileSyncState() }
+    }
+
+    private func restartSync() async {
+        guard let syncTask else { return }
+        syncEngine.interrupt()
+        syncTask.cancel()
+        await syncTask.value
+        self.syncTask = nil
+        await reconcileSyncState()
     }
 
     private func reconcileSyncState() async {
@@ -137,7 +154,7 @@ final class NodeViewModel {
                 if syncTask == nil {
                     let reindexMode = pendingReindexMode
                     pendingReindexMode = nil
-                    start(reindexMode: reindexMode)
+                    start(reindexMode: reindexMode, networkEnabled: isNetworkEnabled)
                 }
                 return
             }
@@ -156,7 +173,7 @@ final class NodeViewModel {
         }
     }
 
-    private func start(reindexMode: ReindexMode?) {
+    private func start(reindexMode: ReindexMode?, networkEnabled: Bool = true) {
         let syncEngine = syncEngine
 
         syncTask = Task { [weak self] in
@@ -165,7 +182,7 @@ final class NodeViewModel {
             }
 
             do {
-                try await syncEngine.run(reindexMode: reindexMode) { [weak self] snapshot in
+                try await syncEngine.run(reindexMode: reindexMode, networkEnabled: networkEnabled) { [weak self] snapshot in
                     await self?.apply(snapshot: snapshot)
                 }
             } catch is CancellationError {
@@ -256,7 +273,7 @@ struct NodeSyncEngine {
         self.storageRoot = storageRoot
     }
 
-    func run(reindexMode: ReindexMode? = nil, update: @escaping @Sendable (SyncSnapshot) async -> Void) async throws {
+    func run(reindexMode: ReindexMode? = nil, networkEnabled: Bool = true, update: @escaping @Sendable (SyncSnapshot) async -> Void) async throws {
         var snapshot = SyncSnapshot(
             phase: .preparing,
             statusText: reindexMode?.openingStatusText ?? "Opening kernel",
@@ -274,8 +291,18 @@ struct NodeSyncEngine {
         runState.install(kernel)
         defer { runState.clear(kernel) }
 
-        let remoteHeight = try await client.fetchTipHeight()
         let currentTip = try kernel.currentTip()
+
+        guard networkEnabled else {
+            snapshot.localHeight = currentTip.height
+            snapshot.tipHash = currentTip.hash
+            snapshot.phase = .finished
+            snapshot.statusText = "Network disabled"
+            await update(snapshot)
+            return
+        }
+
+        let remoteHeight = try await client.fetchTipHeight()
 
         snapshot.remoteHeight = remoteHeight
         snapshot.localHeight = currentTip.height
