@@ -9,6 +9,9 @@ private let kernelSynchronizationStateInitDownload: UInt8 = 1
 private let kernelSynchronizationStatePostInit: UInt8 = 2
 private let kernelWarningUnknownNewRulesActivated: UInt8 = 0
 private let kernelWarningLargeWorkInvalidChain: UInt8 = 1
+private let kernelValidationModeValid: UInt8 = 0
+private let kernelValidationModeInvalid: UInt8 = 1
+private let kernelValidationModeInternalError: UInt8 = 2
 private let kernelScriptVerifyStatusOK: UInt8 = 0
 private let kernelScriptVerificationFlagsAll: UInt32 =
     (1 << 0) |
@@ -48,6 +51,8 @@ enum BitcoinKernelError: LocalizedError {
     case blockHeaderCreationFailed
     case blockHeaderHashUnavailable
     case blockHeaderHashMismatch(expected: String, actual: String)
+    case blockHeaderProcessingFailed(Int32)
+    case blockHeaderValidationFailed(mode: UInt8, result: UInt32)
     case blockCreationFailed
     case blockProcessingFailed(Int32)
     case secondTransactionSerializationFailed
@@ -94,6 +99,10 @@ enum BitcoinKernelError: LocalizedError {
             return "Failed to read block header hash."
         case let .blockHeaderHashMismatch(expected, actual):
             return "Block header hash mismatch. Expected \(expected), got \(actual)."
+        case .blockHeaderProcessingFailed(let code):
+            return "Kernel block header processing failed with code \(code)."
+        case let .blockHeaderValidationFailed(mode, result):
+            return "Kernel block header validation failed with mode \(mode) and result \(result)."
         case .blockCreationFailed:
             return "Failed to parse raw block bytes."
         case .blockProcessingFailed(let code):
@@ -357,7 +366,18 @@ final class BitcoinKernel {
 
     @discardableResult
     func process(rawBlock: Data, expectedHash: String? = nil) throws -> ChainTip {
-        _ = try blockHeader(from: rawBlock, expectedHash: expectedHash)
+        let header = try rawBlock.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress,
+                  let header = library.btck_block_header_create(baseAddress, Self.serializedBlockHeaderLength) else {
+                throw BitcoinKernelError.blockHeaderCreationFailed
+            }
+            return header
+        }
+        defer { library.btck_block_header_destroy(header) }
+
+        let headerSummary = try blockHeader(from: rawBlock, expectedHash: expectedHash)
+        try process(header: header)
+        _ = headerSummary
 
         let block = try rawBlock.withUnsafeBytes { rawBuffer in
             guard let baseAddress = rawBuffer.baseAddress,
@@ -389,6 +409,24 @@ final class BitcoinKernel {
         }
 
         return try currentTip()
+    }
+
+    private func process(header: OpaquePointer) throws {
+        guard let validationState = library.btck_block_validation_state_create() else {
+            throw BitcoinKernelError.blockHeaderProcessingFailed(-1)
+        }
+        defer { library.btck_block_validation_state_destroy(validationState) }
+
+        let result = library.btck_chainstate_manager_process_block_header(chainstateManager, header, validationState)
+        guard result == 0 else {
+            throw BitcoinKernelError.blockHeaderProcessingFailed(result)
+        }
+
+        let validationMode = library.btck_block_validation_state_get_validation_mode(validationState)
+        guard validationMode == kernelValidationModeValid else {
+            let validationResult = library.btck_block_validation_state_get_block_validation_result(validationState)
+            throw BitcoinKernelError.blockHeaderValidationFailed(mode: validationMode, result: validationResult)
+        }
     }
 
     private func extractSecondTransaction(from block: OpaquePointer) throws -> (transaction: OpaquePointer, txid: String)? {
@@ -642,6 +680,10 @@ private final class LoadedBitcoinKernel {
     let btck_block_header_get_version: @convention(c) (OpaquePointer?) -> Int32
     let btck_block_header_get_nonce: @convention(c) (OpaquePointer?) -> UInt32
     let btck_block_header_destroy: @convention(c) (OpaquePointer?) -> Void
+    let btck_block_validation_state_create: @convention(c) () -> OpaquePointer?
+    let btck_block_validation_state_get_validation_mode: @convention(c) (OpaquePointer?) -> UInt8
+    let btck_block_validation_state_get_block_validation_result: @convention(c) (OpaquePointer?) -> UInt32
+    let btck_block_validation_state_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_block_hash_to_bytes: @convention(c) (OpaquePointer?, UnsafeMutablePointer<UInt8>?) -> Void
     let btck_block_hash_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_block_create: @convention(c) (UnsafeRawPointer?, Int) -> OpaquePointer?
@@ -662,6 +704,7 @@ private final class LoadedBitcoinKernel {
     let btck_script_pubkey_verify: @convention(c) (OpaquePointer?, Int64, OpaquePointer?, OpaquePointer?, UInt32, UInt32, UnsafeMutablePointer<UInt8>?) -> Int32
     let btck_transaction_output_get_script_pubkey: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_transaction_output_get_amount: @convention(c) (OpaquePointer?) -> Int64
+    let btck_chainstate_manager_process_block_header: @convention(c) (OpaquePointer?, OpaquePointer?, OpaquePointer?) -> Int32
     let btck_chainstate_manager_process_block: @convention(c) (OpaquePointer?, OpaquePointer?, UnsafeMutablePointer<Int32>?) -> Int32
     let btck_chainstate_manager_get_block_tree_entry_by_hash: @convention(c) (OpaquePointer?, OpaquePointer?) -> OpaquePointer?
     let btck_block_spent_outputs_read: @convention(c) (OpaquePointer?, OpaquePointer?) -> OpaquePointer?
@@ -739,6 +782,10 @@ private final class LoadedBitcoinKernel {
         btck_block_header_get_version = try loadSymbol("btck_block_header_get_version")
         btck_block_header_get_nonce = try loadSymbol("btck_block_header_get_nonce")
         btck_block_header_destroy = try loadSymbol("btck_block_header_destroy")
+        btck_block_validation_state_create = try loadSymbol("btck_block_validation_state_create")
+        btck_block_validation_state_get_validation_mode = try loadSymbol("btck_block_validation_state_get_validation_mode")
+        btck_block_validation_state_get_block_validation_result = try loadSymbol("btck_block_validation_state_get_block_validation_result")
+        btck_block_validation_state_destroy = try loadSymbol("btck_block_validation_state_destroy")
         btck_block_hash_to_bytes = try loadSymbol("btck_block_hash_to_bytes")
         btck_block_hash_destroy = try loadSymbol("btck_block_hash_destroy")
         btck_block_create = try loadSymbol("btck_block_create")
@@ -759,6 +806,7 @@ private final class LoadedBitcoinKernel {
         btck_script_pubkey_verify = try loadSymbol("btck_script_pubkey_verify")
         btck_transaction_output_get_script_pubkey = try loadSymbol("btck_transaction_output_get_script_pubkey")
         btck_transaction_output_get_amount = try loadSymbol("btck_transaction_output_get_amount")
+        btck_chainstate_manager_process_block_header = try loadSymbol("btck_chainstate_manager_process_block_header")
         btck_chainstate_manager_process_block = try loadSymbol("btck_chainstate_manager_process_block")
         btck_chainstate_manager_get_block_tree_entry_by_hash = try loadSymbol("btck_chainstate_manager_get_block_tree_entry_by_hash")
         btck_block_spent_outputs_read = try loadSymbol("btck_block_spent_outputs_read")
