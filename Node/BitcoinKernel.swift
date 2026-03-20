@@ -9,6 +9,15 @@ private let kernelSynchronizationStateInitDownload: UInt8 = 1
 private let kernelSynchronizationStatePostInit: UInt8 = 2
 private let kernelWarningUnknownNewRulesActivated: UInt8 = 0
 private let kernelWarningLargeWorkInvalidChain: UInt8 = 1
+private let kernelScriptVerifyStatusOK: UInt8 = 0
+private let kernelScriptVerificationFlagsAll: UInt32 =
+    (1 << 0) |
+    (1 << 2) |
+    (1 << 4) |
+    (1 << 9) |
+    (1 << 10) |
+    (1 << 11) |
+    (1 << 17)
 
 struct ChainTip: Equatable, Sendable {
     let height: Int
@@ -41,6 +50,15 @@ enum BitcoinKernelError: LocalizedError {
     case blockHeaderHashMismatch(expected: String, actual: String)
     case blockCreationFailed
     case blockProcessingFailed(Int32)
+    case secondTransactionSerializationFailed
+    case secondTransactionCreationFailed
+    case secondTransactionTxidUnavailable
+    case processedBlockEntryUnavailable
+    case processedBlockSpentOutputsUnavailable
+    case secondTransactionSpentOutputsUnavailable
+    case secondTransactionSpentOutputsMismatch(expected: Int, actual: Int)
+    case secondTransactionInspectionFailed(String)
+    case secondTransactionVerificationFailed(txid: String, inputIndex: Int, status: UInt8)
     case activeChainUnavailable
     case bestEntryUnavailable
     case blockEntryUnavailable(Int)
@@ -80,6 +98,24 @@ enum BitcoinKernelError: LocalizedError {
             return "Failed to parse raw block bytes."
         case .blockProcessingFailed(let code):
             return "Kernel block processing failed with code \(code)."
+        case .secondTransactionSerializationFailed:
+            return "Failed to serialize the second transaction from the block."
+        case .secondTransactionCreationFailed:
+            return "Failed to re-create the second transaction from serialized bytes."
+        case .secondTransactionTxidUnavailable:
+            return "Failed to read the second transaction txid."
+        case .processedBlockEntryUnavailable:
+            return "Processed block is not addressable by hash in kernel state."
+        case .processedBlockSpentOutputsUnavailable:
+            return "Kernel could not read spent outputs for the processed block."
+        case .secondTransactionSpentOutputsUnavailable:
+            return "Kernel did not expose spent outputs for the block's second transaction."
+        case let .secondTransactionSpentOutputsMismatch(expected, actual):
+            return "Second transaction spent output count mismatch. Expected \(expected), got \(actual)."
+        case let .secondTransactionInspectionFailed(reason):
+            return "Failed to inspect the second transaction: \(reason)"
+        case let .secondTransactionVerificationFailed(txid, inputIndex, status):
+            return "Second transaction verification failed for txid \(txid) at input \(inputIndex) with status \(status)."
         case .activeChainUnavailable:
             return "Kernel did not expose an active chain."
         case .bestEntryUnavailable:
@@ -95,6 +131,25 @@ enum BitcoinKernelError: LocalizedError {
 final class BitcoinKernel {
     fileprivate static let logger = Logger(subsystem: "nl.sprovoost.Node", category: "BitcoinKernel")
     private static let serializedBlockHeaderLength = 80
+    fileprivate static let kernelWriteBytesCallback: @convention(c) (UnsafeRawPointer?, Int, UnsafeMutableRawPointer?) -> Int32 = { bytes, size, userData in
+        guard let userData else {
+            return 1
+        }
+
+        guard size >= 0 else {
+            return 1
+        }
+
+        guard size == 0 || bytes != nil else {
+            return 1
+        }
+
+        let collector = Unmanaged<KernelByteCollector>.fromOpaque(userData).takeUnretainedValue()
+        if let bytes, size > 0 {
+            collector.data.append(UnsafeRawBufferPointer(start: bytes, count: size).bindMemory(to: UInt8.self))
+        }
+        return 0
+    }
     fileprivate static let kernelLogCallback: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int) -> Void = { _, message, messageLength in
         guard let message else {
             return
@@ -313,13 +368,177 @@ final class BitcoinKernel {
         }
         defer { library.btck_block_destroy(block) }
 
+        let secondTransaction = try extractSecondTransaction(from: block)
+        defer {
+            if let secondTransaction {
+                library.btck_transaction_destroy(secondTransaction.transaction)
+            }
+        }
+
         var newBlock = Int32(0)
         let result = library.btck_chainstate_manager_process_block(chainstateManager, block, &newBlock)
         guard result == 0 else {
             throw BitcoinKernelError.blockProcessingFailed(result)
         }
 
+        if let secondTransaction {
+            // Re-validate tx1 after block acceptance. The public kernel API does not expose a
+            // pre-acceptance coin lookup equivalent to CCoinsView::GetCoin, so the spent outputs
+            // needed for script verification are sourced from the processed block's undo data.
+            try verifySecondTransaction(secondTransaction.transaction, txid: secondTransaction.txid, in: block)
+        }
+
         return try currentTip()
+    }
+
+    private func extractSecondTransaction(from block: OpaquePointer) throws -> (transaction: OpaquePointer, txid: String)? {
+        let transactionCount = Int(library.btck_block_count_transactions(block))
+        guard transactionCount > 1 else {
+            return nil
+        }
+
+        guard let blockTransaction = library.btck_block_get_transaction_at(block, 1) else {
+            throw BitcoinKernelError.secondTransactionInspectionFailed("The block did not expose transaction 1.")
+        }
+
+        let inputCount = Int(library.btck_transaction_count_inputs(blockTransaction))
+        guard inputCount > 0 else {
+            throw BitcoinKernelError.secondTransactionInspectionFailed("The second transaction has no inputs.")
+        }
+
+        let outputCount = Int(library.btck_transaction_count_outputs(blockTransaction))
+        guard outputCount > 0 else {
+            throw BitcoinKernelError.secondTransactionInspectionFailed("The second transaction has no outputs.")
+        }
+
+        guard library.btck_transaction_get_output_at(blockTransaction, 0) != nil else {
+            throw BitcoinKernelError.secondTransactionInspectionFailed("The second transaction did not expose output 0.")
+        }
+
+        let txid = try transactionID(for: blockTransaction)
+        let serializedTransaction = try serializeTransaction(blockTransaction)
+        let transaction = try serializedTransaction.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress,
+                  let transaction = library.btck_transaction_create(baseAddress, rawBuffer.count) else {
+                throw BitcoinKernelError.secondTransactionCreationFailed
+            }
+            return transaction
+        }
+
+        return (transaction, txid)
+    }
+
+    private func verifySecondTransaction(_ transaction: OpaquePointer, txid: String, in block: OpaquePointer) throws {
+        guard let blockHash = library.btck_block_get_hash(block) else {
+            throw BitcoinKernelError.blockHashUnavailable
+        }
+        defer { library.btck_block_hash_destroy(blockHash) }
+
+        guard let blockEntry = library.btck_chainstate_manager_get_block_tree_entry_by_hash(chainstateManager, blockHash) else {
+            throw BitcoinKernelError.processedBlockEntryUnavailable
+        }
+
+        guard let blockSpentOutputs = library.btck_block_spent_outputs_read(chainstateManager, blockEntry) else {
+            throw BitcoinKernelError.processedBlockSpentOutputsUnavailable
+        }
+        defer { library.btck_block_spent_outputs_destroy(blockSpentOutputs) }
+
+        // This is a post-acceptance re-validation step. Block undo data excludes the coinbase
+        // transaction, so transaction 1 maps to undo index 0. Tx1 is also a safe starting point:
+        // a valid tx1 cannot spend the preceding coinbase, and without a public chainstate coin
+        // lookup equivalent to CCoinsView::GetCoin we currently depend on undo data for prevouts.
+        guard library.btck_block_spent_outputs_count(blockSpentOutputs) > 0,
+              let transactionSpentOutputs = library.btck_block_spent_outputs_get_transaction_spent_outputs_at(blockSpentOutputs, 0) else {
+            throw BitcoinKernelError.secondTransactionSpentOutputsUnavailable
+        }
+
+        let inputCount = Int(library.btck_transaction_count_inputs(transaction))
+        let spentOutputCount = Int(library.btck_transaction_spent_outputs_count(transactionSpentOutputs))
+        guard spentOutputCount == inputCount else {
+            throw BitcoinKernelError.secondTransactionSpentOutputsMismatch(expected: inputCount, actual: spentOutputCount)
+        }
+
+        var spentOutputs: [OpaquePointer?] = []
+        spentOutputs.reserveCapacity(inputCount)
+
+        for inputIndex in 0..<inputCount {
+            guard let input = library.btck_transaction_get_input_at(transaction, inputIndex) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("Missing input \(inputIndex).")
+            }
+            guard let outPoint = library.btck_transaction_input_get_out_point(input) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("Missing outpoint for input \(inputIndex).")
+            }
+            _ = library.btck_transaction_out_point_get_index(outPoint)
+            guard let previousTxid = library.btck_transaction_out_point_get_txid(outPoint) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("Missing prevout txid for input \(inputIndex).")
+            }
+            _ = library.txidString(for: previousTxid)
+
+            guard let coin = library.btck_transaction_spent_outputs_get_coin_at(transactionSpentOutputs, inputIndex) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("Missing spent coin for input \(inputIndex).")
+            }
+            _ = library.btck_coin_confirmation_height(coin)
+            _ = library.btck_coin_is_coinbase(coin)
+
+            guard let spentOutput = library.btck_coin_get_output(coin) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("Missing spent output for input \(inputIndex).")
+            }
+            spentOutputs.append(spentOutput)
+        }
+
+        let precomputedTransactionData = spentOutputs.withUnsafeBufferPointer { spentOutputsBuffer in
+            library.btck_precomputed_transaction_data_create(transaction, spentOutputsBuffer.baseAddress, spentOutputsBuffer.count)
+        }
+        guard let precomputedTransactionData else {
+            throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to create precomputed transaction data.")
+        }
+        defer { library.btck_precomputed_transaction_data_destroy(precomputedTransactionData) }
+
+        for inputIndex in 0..<spentOutputs.count {
+            guard let spentOutput = spentOutputs[inputIndex],
+                  let scriptPubkey = library.btck_transaction_output_get_script_pubkey(spentOutput) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("Missing script pubkey for input \(inputIndex).")
+            }
+
+            let amount = library.btck_transaction_output_get_amount(spentOutput)
+            var status = kernelScriptVerifyStatusOK
+            let verified = library.btck_script_pubkey_verify(
+                scriptPubkey,
+                amount,
+                transaction,
+                precomputedTransactionData,
+                UInt32(inputIndex),
+                kernelScriptVerificationFlagsAll,
+                &status
+            )
+
+            guard verified == 1 else {
+                throw BitcoinKernelError.secondTransactionVerificationFailed(txid: txid, inputIndex: inputIndex, status: status)
+            }
+        }
+    }
+
+    private func transactionID(for transaction: OpaquePointer) throws -> String {
+        guard let txid = library.btck_transaction_get_txid(transaction) else {
+            throw BitcoinKernelError.secondTransactionTxidUnavailable
+        }
+
+        return library.txidString(for: txid)
+    }
+
+    private func serializeTransaction(_ transaction: OpaquePointer) throws -> Data {
+        let collector = KernelByteCollector()
+        let result = library.btck_transaction_to_bytes(
+            transaction,
+            Self.kernelWriteBytesCallback,
+            Unmanaged.passUnretained(collector).toOpaque()
+        )
+
+        guard result == 0, !collector.data.isEmpty else {
+            throw BitcoinKernelError.secondTransactionSerializationFailed
+        }
+
+        return collector.data
     }
 
     private static func isChainstateLocked(at dataDirectory: URL) -> Bool {
@@ -379,11 +598,16 @@ final class BitcoinKernel {
     }
 }
 
+private final class KernelByteCollector {
+    var data = Data()
+}
+
 private final class LoadedBitcoinKernel {
     typealias ChainType = UInt8
     typealias LogCategory = UInt8
     typealias LogLevel = UInt8
     typealias LogCallback = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int) -> Void
+    typealias WriteBytesCallback = @convention(c) (UnsafeRawPointer?, Int, UnsafeMutableRawPointer?) -> Int32
 
     private let handle: UnsafeMutableRawPointer
 
@@ -421,8 +645,38 @@ private final class LoadedBitcoinKernel {
     let btck_block_hash_to_bytes: @convention(c) (OpaquePointer?, UnsafeMutablePointer<UInt8>?) -> Void
     let btck_block_hash_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_block_create: @convention(c) (UnsafeRawPointer?, Int) -> OpaquePointer?
+    let btck_block_count_transactions: @convention(c) (OpaquePointer?) -> Int
+    let btck_block_get_transaction_at: @convention(c) (OpaquePointer?, Int) -> OpaquePointer?
+    let btck_block_get_hash: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_block_destroy: @convention(c) (OpaquePointer?) -> Void
+    let btck_transaction_create: @convention(c) (UnsafeRawPointer?, Int) -> OpaquePointer?
+    let btck_transaction_to_bytes: @convention(c) (OpaquePointer?, WriteBytesCallback?, UnsafeMutableRawPointer?) -> Int32
+    let btck_transaction_count_outputs: @convention(c) (OpaquePointer?) -> Int
+    let btck_transaction_get_output_at: @convention(c) (OpaquePointer?, Int) -> OpaquePointer?
+    let btck_transaction_get_input_at: @convention(c) (OpaquePointer?, Int) -> OpaquePointer?
+    let btck_transaction_count_inputs: @convention(c) (OpaquePointer?) -> Int
+    let btck_transaction_get_txid: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_transaction_destroy: @convention(c) (OpaquePointer?) -> Void
+    let btck_precomputed_transaction_data_create: @convention(c) (OpaquePointer?, UnsafePointer<OpaquePointer?>?, Int) -> OpaquePointer?
+    let btck_precomputed_transaction_data_destroy: @convention(c) (OpaquePointer?) -> Void
+    let btck_script_pubkey_verify: @convention(c) (OpaquePointer?, Int64, OpaquePointer?, OpaquePointer?, UInt32, UInt32, UnsafeMutablePointer<UInt8>?) -> Int32
+    let btck_transaction_output_get_script_pubkey: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_transaction_output_get_amount: @convention(c) (OpaquePointer?) -> Int64
     let btck_chainstate_manager_process_block: @convention(c) (OpaquePointer?, OpaquePointer?, UnsafeMutablePointer<Int32>?) -> Int32
+    let btck_chainstate_manager_get_block_tree_entry_by_hash: @convention(c) (OpaquePointer?, OpaquePointer?) -> OpaquePointer?
+    let btck_block_spent_outputs_read: @convention(c) (OpaquePointer?, OpaquePointer?) -> OpaquePointer?
+    let btck_block_spent_outputs_count: @convention(c) (OpaquePointer?) -> Int
+    let btck_block_spent_outputs_get_transaction_spent_outputs_at: @convention(c) (OpaquePointer?, Int) -> OpaquePointer?
+    let btck_block_spent_outputs_destroy: @convention(c) (OpaquePointer?) -> Void
+    let btck_transaction_spent_outputs_count: @convention(c) (OpaquePointer?) -> Int
+    let btck_transaction_spent_outputs_get_coin_at: @convention(c) (OpaquePointer?, Int) -> OpaquePointer?
+    let btck_transaction_input_get_out_point: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_transaction_out_point_get_index: @convention(c) (OpaquePointer?) -> UInt32
+    let btck_transaction_out_point_get_txid: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_txid_to_bytes: @convention(c) (OpaquePointer?, UnsafeMutablePointer<UInt8>?) -> Void
+    let btck_coin_confirmation_height: @convention(c) (OpaquePointer?) -> UInt32
+    let btck_coin_is_coinbase: @convention(c) (OpaquePointer?) -> Int32
+    let btck_coin_get_output: @convention(c) (OpaquePointer?) -> OpaquePointer?
 
     init() throws {
         let candidates = Self.candidateLibraryPaths()
@@ -488,8 +742,38 @@ private final class LoadedBitcoinKernel {
         btck_block_hash_to_bytes = try loadSymbol("btck_block_hash_to_bytes")
         btck_block_hash_destroy = try loadSymbol("btck_block_hash_destroy")
         btck_block_create = try loadSymbol("btck_block_create")
+        btck_block_count_transactions = try loadSymbol("btck_block_count_transactions")
+        btck_block_get_transaction_at = try loadSymbol("btck_block_get_transaction_at")
+        btck_block_get_hash = try loadSymbol("btck_block_get_hash")
         btck_block_destroy = try loadSymbol("btck_block_destroy")
+        btck_transaction_create = try loadSymbol("btck_transaction_create")
+        btck_transaction_to_bytes = try loadSymbol("btck_transaction_to_bytes")
+        btck_transaction_count_outputs = try loadSymbol("btck_transaction_count_outputs")
+        btck_transaction_get_output_at = try loadSymbol("btck_transaction_get_output_at")
+        btck_transaction_get_input_at = try loadSymbol("btck_transaction_get_input_at")
+        btck_transaction_count_inputs = try loadSymbol("btck_transaction_count_inputs")
+        btck_transaction_get_txid = try loadSymbol("btck_transaction_get_txid")
+        btck_transaction_destroy = try loadSymbol("btck_transaction_destroy")
+        btck_precomputed_transaction_data_create = try loadSymbol("btck_precomputed_transaction_data_create")
+        btck_precomputed_transaction_data_destroy = try loadSymbol("btck_precomputed_transaction_data_destroy")
+        btck_script_pubkey_verify = try loadSymbol("btck_script_pubkey_verify")
+        btck_transaction_output_get_script_pubkey = try loadSymbol("btck_transaction_output_get_script_pubkey")
+        btck_transaction_output_get_amount = try loadSymbol("btck_transaction_output_get_amount")
         btck_chainstate_manager_process_block = try loadSymbol("btck_chainstate_manager_process_block")
+        btck_chainstate_manager_get_block_tree_entry_by_hash = try loadSymbol("btck_chainstate_manager_get_block_tree_entry_by_hash")
+        btck_block_spent_outputs_read = try loadSymbol("btck_block_spent_outputs_read")
+        btck_block_spent_outputs_count = try loadSymbol("btck_block_spent_outputs_count")
+        btck_block_spent_outputs_get_transaction_spent_outputs_at = try loadSymbol("btck_block_spent_outputs_get_transaction_spent_outputs_at")
+        btck_block_spent_outputs_destroy = try loadSymbol("btck_block_spent_outputs_destroy")
+        btck_transaction_spent_outputs_count = try loadSymbol("btck_transaction_spent_outputs_count")
+        btck_transaction_spent_outputs_get_coin_at = try loadSymbol("btck_transaction_spent_outputs_get_coin_at")
+        btck_transaction_input_get_out_point = try loadSymbol("btck_transaction_input_get_out_point")
+        btck_transaction_out_point_get_index = try loadSymbol("btck_transaction_out_point_get_index")
+        btck_transaction_out_point_get_txid = try loadSymbol("btck_transaction_out_point_get_txid")
+        btck_txid_to_bytes = try loadSymbol("btck_txid_to_bytes")
+        btck_coin_confirmation_height = try loadSymbol("btck_coin_confirmation_height")
+        btck_coin_is_coinbase = try loadSymbol("btck_coin_is_coinbase")
+        btck_coin_get_output = try loadSymbol("btck_coin_get_output")
     }
 
     deinit {
@@ -544,6 +828,13 @@ private final class LoadedBitcoinKernel {
         btck_block_hash_to_bytes(blockHash, &bytes)
         return bytes.reversed().map { String(format: "%02x", $0) }.joined()
     }
+
+    func txidString(for txid: OpaquePointer) -> String {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        btck_txid_to_bytes(txid, &bytes)
+        return bytes.reversed().map { String(format: "%02x", $0) }.joined()
+    }
+
     private static func candidateLibraryPaths() -> [String] {
         let environment = ProcessInfo.processInfo.environment
         var paths: [String] = []

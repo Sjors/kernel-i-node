@@ -37,4 +37,11 @@ struct NodeTests {
             == "Block header hash mismatch. Expected expected-hash, got actual-hash."
         )
     }
+
+    @Test func secondTransactionVerificationErrorHasHelpfulDescription() async throws {
+        #expect(
+            BitcoinKernelError.secondTransactionVerificationFailed(txid: "txid", inputIndex: 1, status: 2).errorDescription
+            == "Second transaction verification failed for txid txid at input 1 with status 2."
+        )
+    }
 }
