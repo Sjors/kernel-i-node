@@ -16,28 +16,6 @@ struct ContentView: View {
             Text("Signet Kernel Sync")
                 .font(.title.bold())
 
-            LabeledContent {
-                Button(action: viewModel.toggleSync) {
-                    Label(viewModel.isSyncEnabled ? "On" : "Off",
-                          systemImage: viewModel.isSyncEnabled ? "largecircle.fill.circle" : "circle")
-                }
-                .buttonStyle(.plain)
-            } label: {
-                Text("Sync")
-            }
-
-            LabeledContent {
-                Button {
-                    viewModel.toggleNetwork()
-                } label: {
-                    Label(viewModel.isNetworkEnabled ? "On" : "Off",
-                          systemImage: viewModel.isNetworkEnabled ? "largecircle.fill.circle" : "circle")
-                }
-                .buttonStyle(.plain)
-            } label: {
-                Text("Network")
-            }
-
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 3)
@@ -77,6 +55,24 @@ struct ContentView: View {
             }
 
             Spacer()
+
+            Divider()
+
+            HStack(spacing: 12) {
+                Button(viewModel.isSyncEnabled ? "Stop" : "Start") {
+                    viewModel.toggleSync()
+                }
+
+                Spacer()
+
+                Button {
+                    viewModel.toggleNetwork()
+                } label: {
+                    Label("Network",
+                          systemImage: viewModel.isNetworkEnabled ? "largecircle.fill.circle" : "circle")
+                }
+                .buttonStyle(.plain)
+            }
 
             Divider()
 
