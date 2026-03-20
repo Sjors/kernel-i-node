@@ -63,6 +63,11 @@ final class NodeViewModel {
         Task { await reconcileSyncState() }
     }
 
+    func refreshKernelLogging() {
+        BitcoinKernel.refreshRuntimeLogSettings()
+        syncEngine.refreshLoggingSettings()
+    }
+
     private func reconcileSyncState() async {
         guard !isReconcilingSync else { return }
 
@@ -169,6 +174,14 @@ struct NodeSyncEngine {
                     .error("Kernel interrupt failed: \(String(describing: error), privacy: .public)")
             }
         }
+
+        func refreshLoggingSettings() {
+            lock.lock()
+            let kernel = self.kernel
+            lock.unlock()
+
+            kernel?.refreshLoggingSettings()
+        }
     }
 
     private let client: MempoolClient
@@ -256,6 +269,10 @@ struct NodeSyncEngine {
 
     func interrupt() {
         runState.interrupt()
+    }
+
+    func refreshLoggingSettings() {
+        runState.refreshLoggingSettings()
     }
 
     nonisolated static func defaultStorageRoot() -> URL {

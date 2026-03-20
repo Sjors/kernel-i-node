@@ -3,6 +3,7 @@ import Foundation
 import OSLog
 
 private let kernelLogCategoryAll: UInt8 = 0
+private let kernelLogLevelDebug: UInt8 = 1
 private let kernelLogLevelInfo: UInt8 = 2
 private let kernelSynchronizationStateInitReindex: UInt8 = 0
 private let kernelSynchronizationStateInitDownload: UInt8 = 1
@@ -21,6 +22,24 @@ private let kernelScriptVerificationFlagsAll: UInt32 =
     (1 << 10) |
     (1 << 11) |
     (1 << 17)
+
+private final class RuntimeKernelLogSettings: @unchecked Sendable {
+    private let lock = NSLock()
+    private var snapshot = KernelLogSettings.snapshot()
+
+    func update(_ snapshot: KernelLogSettingsSnapshot) {
+        lock.lock()
+        self.snapshot = snapshot
+        lock.unlock()
+    }
+
+    func current() -> KernelLogSettingsSnapshot {
+        lock.lock()
+        let snapshot = snapshot
+        lock.unlock()
+        return snapshot
+    }
+}
 
 struct ChainTip: Equatable, Sendable {
     let height: Int
@@ -161,6 +180,7 @@ enum BitcoinKernelError: LocalizedError {
 final class BitcoinKernel {
     fileprivate static let logger = Logger(subsystem: "nl.sprovoost.Node", category: "BitcoinKernel")
     private static let serializedBlockHeaderLength = 80
+    private static let runtimeLogSettings = RuntimeKernelLogSettings()
     fileprivate static let kernelWriteBytesCallback: @convention(c) (UnsafeRawPointer?, Int, UnsafeMutableRawPointer?) -> Int32 = { bytes, size, userData in
         guard let userData else {
             return 1
@@ -185,9 +205,19 @@ final class BitcoinKernel {
             return
         }
 
+        let settings = currentDisplayLogSettings()
+        guard settings.isEnabled, settings.internalLogsEnabled else {
+            return
+        }
+
         let rawMessage = String(decoding: UnsafeBufferPointer(start: UnsafePointer<UInt8>(OpaquePointer(message)), count: messageLength), as: UTF8.self)
         let trimmedMessage = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedMessage.isEmpty else {
+            return
+        }
+
+        if let category = KernelLogSettings.categoryForRawLogLine(trimmedMessage),
+           !settings.enabledCategories.contains(category) {
             return
         }
 
@@ -302,7 +332,11 @@ final class BitcoinKernel {
         do {
             let library = try LoadedBitcoinKernel()
             self.library = library
-            self.loggingConnection = library.makeLoggingConnection(logCallback: Self.kernelLogCallback)
+            let loggingSettings = Self.runtimeLogSettings.current()
+            self.loggingConnection = library.makeLoggingConnection(
+                logCallback: Self.kernelLogCallback,
+                settings: loggingSettings
+            )
 
             let chainParameters = try library.makeChainParameters()
             defer { library.btck_chain_parameters_destroy(chainParameters) }
@@ -451,6 +485,22 @@ final class BitcoinKernel {
         guard result == 0 else {
             throw BitcoinKernelError.contextInterruptFailed(result)
         }
+    }
+
+    func refreshLoggingSettings() {
+        library.applyLoggingPreferences(Self.runtimeLogSettings.current())
+    }
+
+    static func refreshRuntimeLogSettings() {
+        runtimeLogSettings.update(KernelLogSettings.snapshot())
+    }
+
+    static func currentRuntimeLogSettings() -> KernelLogSettingsSnapshot {
+        runtimeLogSettings.current()
+    }
+
+    static func currentDisplayLogSettings() -> KernelLogSettingsSnapshot {
+        KernelLogSettings.snapshot()
     }
 
     func blockHeader(from rawBlock: Data, expectedHash: String? = nil) throws -> BlockHeader {
@@ -1011,6 +1061,7 @@ private final class LoadedBitcoinKernel {
     let btck_context_options_set_validation_interface_raw: UnsafeMutableRawPointer
     let btck_logging_set_level_category: @convention(c) (LogCategory, LogLevel) -> Void
     let btck_logging_enable_category: @convention(c) (LogCategory) -> Void
+    let btck_logging_disable_category: @convention(c) (LogCategory) -> Void
     let btck_logging_connection_create: @convention(c) (LogCallback?, UnsafeMutableRawPointer?, (@convention(c) (UnsafeMutableRawPointer?) -> Void)?) -> OpaquePointer?
     let btck_logging_connection_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_chain_parameters_create: @convention(c) (ChainType) -> OpaquePointer?
@@ -1148,6 +1199,7 @@ private final class LoadedBitcoinKernel {
         btck_context_options_set_validation_interface_raw = try loadRawSymbol("btck_context_options_set_validation_interface")
         btck_logging_set_level_category = try loadSymbol("btck_logging_set_level_category")
         btck_logging_enable_category = try loadSymbol("btck_logging_enable_category")
+        btck_logging_disable_category = try loadSymbol("btck_logging_disable_category")
         btck_logging_connection_create = try loadSymbol("btck_logging_connection_create")
         btck_logging_connection_destroy = try loadSymbol("btck_logging_connection_destroy")
         btck_chain_parameters_create = try loadSymbol("btck_chain_parameters_create")
@@ -1263,10 +1315,24 @@ private final class LoadedBitcoinKernel {
         return chainParameters
     }
 
-    func makeLoggingConnection(logCallback: @escaping LogCallback) -> OpaquePointer? {
-        btck_logging_set_level_category(kernelLogCategoryAll, kernelLogLevelInfo)
-        btck_logging_enable_category(kernelLogCategoryAll)
+    func makeLoggingConnection(logCallback: @escaping LogCallback, settings: KernelLogSettingsSnapshot) -> OpaquePointer? {
+        applyLoggingPreferences(settings)
         return btck_logging_connection_create(logCallback, nil, nil)
+    }
+
+    func applyLoggingPreferences(_ settings: KernelLogSettingsSnapshot) {
+        btck_logging_set_level_category(kernelLogCategoryAll, kernelLogLevelInfo)
+        btck_logging_disable_category(kernelLogCategoryAll)
+
+        guard settings.isEnabled, settings.internalLogsEnabled else {
+            return
+        }
+
+        btck_logging_enable_category(kernelLogCategoryAll)
+        for category in settings.enabledCategories {
+            btck_logging_set_level_category(category, kernelLogLevelDebug)
+            btck_logging_enable_category(category)
+        }
     }
 
     func setNotifications(_ contextOptions: OpaquePointer, sink: KernelNotificationSink) {
@@ -1379,28 +1445,53 @@ private final class KernelNotificationSink {
     }
 
     func logHeaderTip(state: UInt8, height: Int64, timestamp: Int64, presync: Bool) {
+        let settings = BitcoinKernel.currentDisplayLogSettings()
+        guard settings.isEnabled, settings.enabledCategories.contains(KernelLogSettings.kernelLogCategoryValidation) else {
+            return
+        }
+
         BitcoinKernel.logger.info(
             "Kernel header tip height \(height, privacy: .public) state \(self.synchronizationStateDescription(state), privacy: .public) timestamp \(timestamp, privacy: .public) presync \(presync, privacy: .public)"
         )
     }
 
     func logProgress(title: String, progressPercent: Int32, resumePossible: Bool) {
+        let settings = BitcoinKernel.currentDisplayLogSettings()
+        guard settings.isEnabled, settings.enabledCategories.contains(KernelLogSettings.kernelLogCategoryValidation) else {
+            return
+        }
+
         BitcoinKernel.logger.info(
             "Kernel progress \(title, privacy: .public) \(progressPercent, privacy: .public)% resumePossible \(resumePossible, privacy: .public)"
         )
     }
 
     func logWarningSet(warning: UInt8, message: String) {
+        let settings = BitcoinKernel.currentDisplayLogSettings()
+        guard settings.isEnabled, settings.enabledCategories.contains(KernelLogSettings.kernelLogCategoryKernel) else {
+            return
+        }
+
         BitcoinKernel.logger.warning(
             "Kernel warning \(self.warningDescription(warning), privacy: .public): \(message, privacy: .public)"
         )
     }
 
     func logFlushError(message: String) {
+        let settings = BitcoinKernel.currentDisplayLogSettings()
+        guard settings.isEnabled, settings.enabledCategories.contains(KernelLogSettings.kernelLogCategoryKernel) else {
+            return
+        }
+
         BitcoinKernel.logger.error("Kernel flush error: \(message, privacy: .public)")
     }
 
     func logFatalError(message: String) {
+        let settings = BitcoinKernel.currentDisplayLogSettings()
+        guard settings.isEnabled, settings.enabledCategories.contains(KernelLogSettings.kernelLogCategoryKernel) else {
+            return
+        }
+
         BitcoinKernel.logger.fault("Kernel fatal error: \(message, privacy: .public)")
     }
 
@@ -1437,6 +1528,11 @@ private final class KernelValidationSink {
     }
 
     func logBlockChecked(block: UnsafeMutableRawPointer?, state: UnsafeRawPointer?) {
+        let settings = BitcoinKernel.currentDisplayLogSettings()
+        guard settings.isEnabled, settings.enabledCategories.contains(KernelLogSettings.kernelLogCategoryValidation) else {
+            return
+        }
+
         guard
             let block = block.map(OpaquePointer.init),
             let state = state.map(OpaquePointer.init)
@@ -1481,6 +1577,11 @@ private final class KernelValidationSink {
     }
 
     private func logBlockLifecycleEvent(prefix: String, block: UnsafeMutableRawPointer?, entry: UnsafeRawPointer?) {
+        let settings = BitcoinKernel.currentDisplayLogSettings()
+        guard settings.isEnabled, settings.enabledCategories.contains(KernelLogSettings.kernelLogCategoryValidation) else {
+            return
+        }
+
         let blockHash = block.map(OpaquePointer.init).flatMap(blockHashString(for:)) ?? "unavailable"
         let (entryHeight, entryHash) = entryInfo(entry)
         BitcoinKernel.logger.info(
