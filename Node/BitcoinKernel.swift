@@ -72,6 +72,8 @@ enum BitcoinKernelError: LocalizedError {
     case bestEntryUnavailable
     case blockEntryUnavailable(Int)
     case blockHashUnavailable
+    case chainInspectionFailed(String)
+    case blockInspectionFailed(String)
     case contextInterruptFailed(Int32)
 
     var errorDescription: String? {
@@ -146,6 +148,10 @@ enum BitcoinKernelError: LocalizedError {
             return "No active-chain entry exists at height \(height)."
         case .blockHashUnavailable:
             return "Failed to read block hash from kernel state."
+        case .chainInspectionFailed(let reason):
+            return "Kernel chain inspection failed: \(reason)"
+        case .blockInspectionFailed(let reason):
+            return "Kernel block inspection failed: \(reason)"
         case .contextInterruptFailed(let code):
             return "Kernel context interrupt failed with code \(code)."
         }
@@ -377,6 +383,9 @@ final class BitcoinKernel {
         guard let activeChain = library.btck_chainstate_manager_get_active_chain(chainstateManager) else {
             throw BitcoinKernelError.activeChainUnavailable
         }
+        guard library.btck_chain_contains(activeChain, entry) == 1 else {
+            throw BitcoinKernelError.chainInspectionFailed("Best entry is not contained in the active chain.")
+        }
 
         let activeChainHeight = Int(library.btck_chain_get_height(activeChain))
         guard activeChainHeight == height else {
@@ -392,6 +401,46 @@ final class BitcoinKernel {
         let activeChainTipHash = library.hexString(for: activeChainHash)
         guard activeChainTipHash == bestHash else {
             throw BitcoinKernelError.activeChainTipMismatch(expected: bestHash, actual: activeChainTipHash)
+        }
+        guard library.btck_block_tree_entry_equals(activeChainEntry, entry) == 1 else {
+            throw BitcoinKernelError.chainInspectionFailed("Best entry and active-chain entry disagree at the tip height.")
+        }
+
+        guard let activeChainHeader = library.btck_block_tree_entry_get_block_header(activeChainEntry) else {
+            throw BitcoinKernelError.chainInspectionFailed("Failed to retrieve the active-chain tip header.")
+        }
+        defer { library.btck_block_header_destroy(activeChainHeader) }
+
+        guard let copiedActiveChainHeader = library.btck_block_header_copy(activeChainHeader) else {
+            throw BitcoinKernelError.chainInspectionFailed("Failed to copy the active-chain tip header.")
+        }
+        defer { library.btck_block_header_destroy(copiedActiveChainHeader) }
+
+        guard let headerHash = library.btck_block_header_get_hash(copiedActiveChainHeader) else {
+            throw BitcoinKernelError.chainInspectionFailed("Failed to retrieve the active-chain tip header hash.")
+        }
+        defer { library.btck_block_hash_destroy(headerHash) }
+
+        guard library.btck_block_hash_equals(headerHash, activeChainHash) == 1 else {
+            throw BitcoinKernelError.chainInspectionFailed("The active-chain tip header hash did not match the tip block hash.")
+        }
+
+        if height > 0 {
+            guard let previousEntry = library.btck_block_tree_entry_get_previous(activeChainEntry) else {
+                throw BitcoinKernelError.chainInspectionFailed("The active-chain tip did not expose a previous entry.")
+            }
+            guard Int(library.btck_block_tree_entry_get_height(previousEntry)) == height - 1 else {
+                throw BitcoinKernelError.chainInspectionFailed("The active-chain tip previous entry had an unexpected height.")
+            }
+            guard let previousEntryHash = library.btck_block_tree_entry_get_block_hash(previousEntry) else {
+                throw BitcoinKernelError.chainInspectionFailed("Failed to retrieve the previous active-chain entry hash.")
+            }
+            guard let previousHeaderHash = library.btck_block_header_get_prev_hash(copiedActiveChainHeader) else {
+                throw BitcoinKernelError.chainInspectionFailed("Failed to retrieve the active-chain tip previous header hash.")
+            }
+            guard library.btck_block_hash_equals(previousHeaderHash, previousEntryHash) == 1 else {
+                throw BitcoinKernelError.chainInspectionFailed("The active-chain tip header prev hash did not match the previous entry hash.")
+            }
         }
 
         return ChainTip(height: height, hash: bestHash)
@@ -472,6 +521,8 @@ final class BitcoinKernel {
             throw BitcoinKernelError.blockSerializationMismatch
         }
 
+        try inspectParsedBlock(block, against: header, expectedSummary: headerSummary)
+
         let secondTransaction = try extractSecondTransaction(from: block)
         defer {
             if let secondTransaction {
@@ -492,6 +543,7 @@ final class BitcoinKernel {
             try verifySecondTransaction(secondTransaction.transaction, txid: secondTransaction.txid, in: block)
         }
 
+        try inspectProcessedBlock(block, rawBlock: rawBlock)
         return try currentTip()
     }
 
@@ -708,6 +760,90 @@ final class BitcoinKernel {
         return collector.data
     }
 
+    private func inspectParsedBlock(_ block: OpaquePointer, against parsedHeader: OpaquePointer, expectedSummary: BlockHeader) throws {
+        guard let blockHeader = library.btck_block_get_header(block) else {
+            throw BitcoinKernelError.blockInspectionFailed("Failed to retrieve the parsed block header.")
+        }
+        defer { library.btck_block_header_destroy(blockHeader) }
+
+        guard let copiedBlockHeader = library.btck_block_header_copy(blockHeader) else {
+            throw BitcoinKernelError.blockInspectionFailed("Failed to copy the parsed block header.")
+        }
+        defer { library.btck_block_header_destroy(copiedBlockHeader) }
+
+        guard let parsedHeaderHash = library.btck_block_header_get_hash(parsedHeader),
+              let blockHeaderHash = library.btck_block_header_get_hash(copiedBlockHeader) else {
+            throw BitcoinKernelError.blockInspectionFailed("Failed to retrieve parsed block header hashes.")
+        }
+        defer {
+            library.btck_block_hash_destroy(parsedHeaderHash)
+            library.btck_block_hash_destroy(blockHeaderHash)
+        }
+
+        guard library.btck_block_hash_equals(parsedHeaderHash, blockHeaderHash) == 1 else {
+            throw BitcoinKernelError.blockInspectionFailed("The parsed block header hash did not match the block-derived header hash.")
+        }
+
+        guard library.btck_block_header_get_version(copiedBlockHeader) == expectedSummary.version,
+              library.btck_block_header_get_timestamp(copiedBlockHeader) == expectedSummary.timestamp,
+              library.btck_block_header_get_bits(copiedBlockHeader) == expectedSummary.bits,
+              library.btck_block_header_get_nonce(copiedBlockHeader) == expectedSummary.nonce else {
+            throw BitcoinKernelError.blockInspectionFailed("The block-derived header fields did not match the serialized header.")
+        }
+    }
+
+    private func inspectProcessedBlock(_ block: OpaquePointer, rawBlock: Data) throws {
+        guard let blockHash = library.btck_block_get_hash(block) else {
+            throw BitcoinKernelError.blockInspectionFailed("Failed to retrieve the processed block hash.")
+        }
+        defer { library.btck_block_hash_destroy(blockHash) }
+
+        guard let copiedBlockHash = library.btck_block_hash_copy(blockHash) else {
+            throw BitcoinKernelError.blockInspectionFailed("Failed to copy the processed block hash.")
+        }
+        defer { library.btck_block_hash_destroy(copiedBlockHash) }
+
+        var blockHashBytes = [UInt8](repeating: 0, count: 32)
+        library.btck_block_hash_to_bytes(copiedBlockHash, &blockHashBytes)
+        guard let recreatedBlockHash = blockHashBytes.withUnsafeBufferPointer({
+            library.btck_block_hash_create($0.baseAddress)
+        }) else {
+            throw BitcoinKernelError.blockInspectionFailed("Failed to recreate the processed block hash from bytes.")
+        }
+        defer { library.btck_block_hash_destroy(recreatedBlockHash) }
+
+        guard library.btck_block_hash_equals(blockHash, copiedBlockHash) == 1,
+              library.btck_block_hash_equals(blockHash, recreatedBlockHash) == 1 else {
+            throw BitcoinKernelError.blockInspectionFailed("Processed block hash equality checks failed.")
+        }
+
+        guard let blockEntry = library.btck_chainstate_manager_get_block_tree_entry_by_hash(chainstateManager, recreatedBlockHash) else {
+            throw BitcoinKernelError.processedBlockEntryUnavailable
+        }
+
+        guard let activeChain = library.btck_chainstate_manager_get_active_chain(chainstateManager) else {
+            throw BitcoinKernelError.activeChainUnavailable
+        }
+        guard library.btck_chain_contains(activeChain, blockEntry) == 1 else {
+            throw BitcoinKernelError.blockInspectionFailed("Processed block entry is not contained in the active chain.")
+        }
+
+        guard let readBlock = library.btck_block_read(chainstateManager, blockEntry) else {
+            throw BitcoinKernelError.blockInspectionFailed("Failed to read the processed block back from disk.")
+        }
+        defer { library.btck_block_destroy(readBlock) }
+
+        guard let copiedReadBlock = library.btck_block_copy(readBlock) else {
+            throw BitcoinKernelError.blockInspectionFailed("Failed to copy the processed block read from disk.")
+        }
+        defer { library.btck_block_destroy(copiedReadBlock) }
+
+        let rereadSerializedBlock = try serializeBlock(copiedReadBlock)
+        guard rereadSerializedBlock == rawBlock else {
+            throw BitcoinKernelError.blockInspectionFailed("The block read from disk did not match the original raw block bytes.")
+        }
+    }
+
     private static func isChainstateLocked(at dataDirectory: URL) -> Bool {
         let lockURL = dataDirectory.appending(path: "chainstate/LOCK", directoryHint: .notDirectory)
 
@@ -809,9 +945,14 @@ private final class LoadedBitcoinKernel {
     let btck_chainstate_manager_get_active_chain: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_chain_get_height: @convention(c) (OpaquePointer?) -> Int32
     let btck_chain_get_by_height: @convention(c) (OpaquePointer?, Int32) -> OpaquePointer?
+    let btck_chain_contains: @convention(c) (OpaquePointer?, OpaquePointer?) -> Int32
+    let btck_block_tree_entry_get_previous: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_block_tree_entry_get_block_header: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_block_tree_entry_get_height: @convention(c) (OpaquePointer?) -> Int32
     let btck_block_tree_entry_get_block_hash: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_block_tree_entry_equals: @convention(c) (OpaquePointer?, OpaquePointer?) -> Int32
     let btck_block_header_create: @convention(c) (UnsafeRawPointer?, Int) -> OpaquePointer?
+    let btck_block_header_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_block_header_get_hash: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_block_header_get_prev_hash: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_block_header_get_timestamp: @convention(c) (OpaquePointer?) -> UInt32
@@ -823,6 +964,12 @@ private final class LoadedBitcoinKernel {
     let btck_block_validation_state_get_validation_mode: @convention(c) (OpaquePointer?) -> UInt8
     let btck_block_validation_state_get_block_validation_result: @convention(c) (OpaquePointer?) -> UInt32
     let btck_block_validation_state_destroy: @convention(c) (OpaquePointer?) -> Void
+    let btck_block_read: @convention(c) (OpaquePointer?, OpaquePointer?) -> OpaquePointer?
+    let btck_block_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_block_get_header: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_block_hash_create: @convention(c) (UnsafePointer<UInt8>?) -> OpaquePointer?
+    let btck_block_hash_equals: @convention(c) (OpaquePointer?, OpaquePointer?) -> Int32
+    let btck_block_hash_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_block_hash_to_bytes: @convention(c) (OpaquePointer?, UnsafeMutablePointer<UInt8>?) -> Void
     let btck_block_hash_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_block_create: @convention(c) (UnsafeRawPointer?, Int) -> OpaquePointer?
@@ -917,9 +1064,14 @@ private final class LoadedBitcoinKernel {
         btck_chainstate_manager_get_active_chain = try loadSymbol("btck_chainstate_manager_get_active_chain")
         btck_chain_get_height = try loadSymbol("btck_chain_get_height")
         btck_chain_get_by_height = try loadSymbol("btck_chain_get_by_height")
+        btck_chain_contains = try loadSymbol("btck_chain_contains")
+        btck_block_tree_entry_get_previous = try loadSymbol("btck_block_tree_entry_get_previous")
+        btck_block_tree_entry_get_block_header = try loadSymbol("btck_block_tree_entry_get_block_header")
         btck_block_tree_entry_get_height = try loadSymbol("btck_block_tree_entry_get_height")
         btck_block_tree_entry_get_block_hash = try loadSymbol("btck_block_tree_entry_get_block_hash")
+        btck_block_tree_entry_equals = try loadSymbol("btck_block_tree_entry_equals")
         btck_block_header_create = try loadSymbol("btck_block_header_create")
+        btck_block_header_copy = try loadSymbol("btck_block_header_copy")
         btck_block_header_get_hash = try loadSymbol("btck_block_header_get_hash")
         btck_block_header_get_prev_hash = try loadSymbol("btck_block_header_get_prev_hash")
         btck_block_header_get_timestamp = try loadSymbol("btck_block_header_get_timestamp")
@@ -931,6 +1083,12 @@ private final class LoadedBitcoinKernel {
         btck_block_validation_state_get_validation_mode = try loadSymbol("btck_block_validation_state_get_validation_mode")
         btck_block_validation_state_get_block_validation_result = try loadSymbol("btck_block_validation_state_get_block_validation_result")
         btck_block_validation_state_destroy = try loadSymbol("btck_block_validation_state_destroy")
+        btck_block_read = try loadSymbol("btck_block_read")
+        btck_block_copy = try loadSymbol("btck_block_copy")
+        btck_block_get_header = try loadSymbol("btck_block_get_header")
+        btck_block_hash_create = try loadSymbol("btck_block_hash_create")
+        btck_block_hash_equals = try loadSymbol("btck_block_hash_equals")
+        btck_block_hash_copy = try loadSymbol("btck_block_hash_copy")
         btck_block_hash_to_bytes = try loadSymbol("btck_block_hash_to_bytes")
         btck_block_hash_destroy = try loadSymbol("btck_block_hash_destroy")
         btck_block_create = try loadSymbol("btck_block_create")
