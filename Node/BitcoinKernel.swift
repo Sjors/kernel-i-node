@@ -67,6 +67,8 @@ enum BitcoinKernelError: LocalizedError {
     case secondTransactionInspectionFailed(String)
     case secondTransactionVerificationFailed(txid: String, inputIndex: Int, status: UInt8)
     case activeChainUnavailable
+    case activeChainHeightMismatch(expected: Int, actual: Int)
+    case activeChainTipMismatch(expected: String, actual: String)
     case bestEntryUnavailable
     case blockEntryUnavailable(Int)
     case blockHashUnavailable
@@ -133,6 +135,10 @@ enum BitcoinKernelError: LocalizedError {
             return "Second transaction verification failed for txid \(txid) at input \(inputIndex) with status \(status)."
         case .activeChainUnavailable:
             return "Kernel did not expose an active chain."
+        case let .activeChainHeightMismatch(expected, actual):
+            return "Kernel active-chain height mismatch. Expected \(expected), got \(actual)."
+        case let .activeChainTipMismatch(expected, actual):
+            return "Kernel active-chain tip mismatch. Expected \(expected), got \(actual)."
         case .bestEntryUnavailable:
             return "Kernel did not expose a best block entry."
         case .blockEntryUnavailable(let height):
@@ -327,8 +333,29 @@ final class BitcoinKernel {
         guard let blockHash = library.btck_block_tree_entry_get_block_hash(entry) else {
             throw BitcoinKernelError.blockHashUnavailable
         }
+        let bestHash = library.hexString(for: blockHash)
 
-        return ChainTip(height: height, hash: library.hexString(for: blockHash))
+        guard let activeChain = library.btck_chainstate_manager_get_active_chain(chainstateManager) else {
+            throw BitcoinKernelError.activeChainUnavailable
+        }
+
+        let activeChainHeight = Int(library.btck_chain_get_height(activeChain))
+        guard activeChainHeight == height else {
+            throw BitcoinKernelError.activeChainHeightMismatch(expected: height, actual: activeChainHeight)
+        }
+
+        guard let activeChainEntry = library.btck_chain_get_by_height(activeChain, Int32(height)) else {
+            throw BitcoinKernelError.blockEntryUnavailable(height)
+        }
+        guard let activeChainHash = library.btck_block_tree_entry_get_block_hash(activeChainEntry) else {
+            throw BitcoinKernelError.blockHashUnavailable
+        }
+        let activeChainTipHash = library.hexString(for: activeChainHash)
+        guard activeChainTipHash == bestHash else {
+            throw BitcoinKernelError.activeChainTipMismatch(expected: bestHash, actual: activeChainTipHash)
+        }
+
+        return ChainTip(height: height, hash: bestHash)
     }
 
     func blockHeader(from rawBlock: Data, expectedHash: String? = nil) throws -> BlockHeader {
