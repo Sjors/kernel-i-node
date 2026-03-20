@@ -240,6 +240,41 @@ final class BitcoinKernel {
 
         sink.logFatalError(message: string(from: message, length: messageLength))
     }
+    fileprivate static let kernelValidationDestroyCallback: @convention(c) (UnsafeMutableRawPointer?) -> Void = { userData in
+        guard let userData else {
+            return
+        }
+
+        Unmanaged<KernelValidationSink>.fromOpaque(userData).release()
+    }
+    fileprivate static let kernelBlockCheckedCallback: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeRawPointer?) -> Void = { userData, block, state in
+        guard let sink = validationSink(from: userData) else {
+            return
+        }
+
+        sink.logBlockChecked(block: block, state: state)
+    }
+    fileprivate static let kernelPoWValidBlockCallback: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeRawPointer?) -> Void = { userData, block, entry in
+        guard let sink = validationSink(from: userData) else {
+            return
+        }
+
+        sink.logPoWValidBlock(block: block, entry: entry)
+    }
+    fileprivate static let kernelBlockConnectedCallback: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeRawPointer?) -> Void = { userData, block, entry in
+        guard let sink = validationSink(from: userData) else {
+            return
+        }
+
+        sink.logBlockConnected(block: block, entry: entry)
+    }
+    fileprivate static let kernelBlockDisconnectedCallback: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeRawPointer?) -> Void = { userData, block, entry in
+        guard let sink = validationSink(from: userData) else {
+            return
+        }
+
+        sink.logBlockDisconnected(block: block, entry: entry)
+    }
 
     private let library: LoadedBitcoinKernel
     private let loggingConnection: OpaquePointer?
@@ -267,6 +302,7 @@ final class BitcoinKernel {
             defer { library.btck_context_options_destroy(contextOptions) }
             library.btck_context_options_set_chainparams(contextOptions, chainParameters)
             library.setNotifications(contextOptions, sink: KernelNotificationSink(library: library))
+            library.setValidationInterface(contextOptions, sink: KernelValidationSink(library: library))
 
             guard let context = library.btck_context_create(contextOptions) else {
                 throw BitcoinKernelError.contextCreationFailed
@@ -709,6 +745,14 @@ final class BitcoinKernel {
         return Unmanaged<KernelNotificationSink>.fromOpaque(userData).takeUnretainedValue()
     }
 
+    fileprivate static func validationSink(from userData: UnsafeMutableRawPointer?) -> KernelValidationSink? {
+        guard let userData else {
+            return nil
+        }
+
+        return Unmanaged<KernelValidationSink>.fromOpaque(userData).takeUnretainedValue()
+    }
+
     fileprivate static func string(from rawString: UnsafePointer<CChar>?, length: Int) -> String {
         guard let rawString, length > 0 else {
             return ""
@@ -733,6 +777,7 @@ private final class LoadedBitcoinKernel {
     private let handle: UnsafeMutableRawPointer
 
     let btck_context_options_set_notifications_raw: UnsafeMutableRawPointer
+    let btck_context_options_set_validation_interface_raw: UnsafeMutableRawPointer
     let btck_logging_set_level_category: @convention(c) (LogCategory, LogLevel) -> Void
     let btck_logging_enable_category: @convention(c) (LogCategory) -> Void
     let btck_logging_connection_create: @convention(c) (LogCallback?, UnsafeMutableRawPointer?, (@convention(c) (UnsafeMutableRawPointer?) -> Void)?) -> OpaquePointer?
@@ -839,6 +884,7 @@ private final class LoadedBitcoinKernel {
 
         self.handle = handle
         btck_context_options_set_notifications_raw = try loadRawSymbol("btck_context_options_set_notifications")
+        btck_context_options_set_validation_interface_raw = try loadRawSymbol("btck_context_options_set_validation_interface")
         btck_logging_set_level_category = try loadSymbol("btck_logging_set_level_category")
         btck_logging_enable_category = try loadSymbol("btck_logging_enable_category")
         btck_logging_connection_create = try loadSymbol("btck_logging_connection_create")
@@ -950,6 +996,25 @@ private final class LoadedBitcoinKernel {
 
         btck_call_context_options_set_notifications(
             btck_context_options_set_notifications_raw,
+            UnsafeMutableRawPointer(contextOptions),
+            callbacks
+        )
+    }
+
+    func setValidationInterface(_ contextOptions: OpaquePointer, sink: KernelValidationSink) {
+        let retainedSink = Unmanaged.passRetained(sink)
+        var callbacks = btck_ValidationInterfaceCallbacks()
+        callbacks.user_data = retainedSink.toOpaque()
+        callbacks.user_data_destroy = BitcoinKernel.kernelValidationDestroyCallback
+        callbacks.block_checked = BitcoinKernel.kernelBlockCheckedCallback
+        callbacks.pow_valid_block = BitcoinKernel.kernelPoWValidBlockCallback
+        callbacks.block_connected = BitcoinKernel.kernelBlockConnectedCallback
+        callbacks.block_disconnected = BitcoinKernel.kernelBlockDisconnectedCallback
+
+        // As with notifications, Swift's dlsym-based C interop is awkward for a by-value callback struct,
+        // so a tiny C shim performs the ABI-sensitive call.
+        btck_call_context_options_set_validation_interface(
+            btck_context_options_set_validation_interface_raw,
             UnsafeMutableRawPointer(contextOptions),
             callbacks
         )
@@ -1069,6 +1134,110 @@ private final class KernelNotificationSink {
             return "large_work_invalid_chain"
         default:
             return "unknown(\(warning))"
+        }
+    }
+}
+
+private final class KernelValidationSink {
+    private let library: LoadedBitcoinKernel
+
+    init(library: LoadedBitcoinKernel) {
+        self.library = library
+    }
+
+    func logBlockChecked(block: UnsafeMutableRawPointer?, state: UnsafeRawPointer?) {
+        guard
+            let block = block.map(OpaquePointer.init),
+            let state = state.map(OpaquePointer.init)
+        else {
+            return
+        }
+
+        let blockHash = blockHashString(for: block) ?? "unavailable"
+        let validationMode = library.btck_block_validation_state_get_validation_mode(state)
+        let validationResult = library.btck_block_validation_state_get_block_validation_result(state)
+
+        switch validationMode {
+        case kernelValidationModeValid:
+            BitcoinKernel.logger.info(
+                "Kernel block checked hash \(blockHash, privacy: .public) mode valid"
+            )
+        case kernelValidationModeInvalid:
+            BitcoinKernel.logger.warning(
+                "Kernel block checked hash \(blockHash, privacy: .public) mode invalid result \(self.validationResultDescription(validationResult), privacy: .public)"
+            )
+        case kernelValidationModeInternalError:
+            BitcoinKernel.logger.error(
+                "Kernel block checked hash \(blockHash, privacy: .public) mode internal_error result \(self.validationResultDescription(validationResult), privacy: .public)"
+            )
+        default:
+            BitcoinKernel.logger.error(
+                "Kernel block checked hash \(blockHash, privacy: .public) mode unknown(\(validationMode), privacy: .public) result \(self.validationResultDescription(validationResult), privacy: .public)"
+            )
+        }
+    }
+
+    func logPoWValidBlock(block: UnsafeMutableRawPointer?, entry: UnsafeRawPointer?) {
+        logBlockLifecycleEvent(prefix: "Kernel pow-valid block", block: block, entry: entry)
+    }
+
+    func logBlockConnected(block: UnsafeMutableRawPointer?, entry: UnsafeRawPointer?) {
+        logBlockLifecycleEvent(prefix: "Kernel block connected", block: block, entry: entry)
+    }
+
+    func logBlockDisconnected(block: UnsafeMutableRawPointer?, entry: UnsafeRawPointer?) {
+        logBlockLifecycleEvent(prefix: "Kernel block disconnected", block: block, entry: entry)
+    }
+
+    private func logBlockLifecycleEvent(prefix: String, block: UnsafeMutableRawPointer?, entry: UnsafeRawPointer?) {
+        let blockHash = block.map(OpaquePointer.init).flatMap(blockHashString(for:)) ?? "unavailable"
+        let (entryHeight, entryHash) = entryInfo(entry)
+        BitcoinKernel.logger.info(
+            "\(prefix, privacy: .public) hash \(blockHash, privacy: .public) entryHeight \(entryHeight, privacy: .public) entryHash \(entryHash, privacy: .public)"
+        )
+    }
+
+    private func blockHashString(for block: OpaquePointer) -> String? {
+        guard let blockHash = library.btck_block_get_hash(block) else {
+            return nil
+        }
+        defer { library.btck_block_hash_destroy(blockHash) }
+        return library.hexString(for: blockHash)
+    }
+
+    private func entryInfo(_ entry: UnsafeRawPointer?) -> (Int, String) {
+        guard let entry else {
+            return (-1, "unavailable")
+        }
+
+        let opaqueEntry = OpaquePointer(entry)
+        let height = Int(library.btck_block_tree_entry_get_height(opaqueEntry))
+        let blockHash = library.btck_block_tree_entry_get_block_hash(opaqueEntry).map(library.hexString(for:)) ?? "unavailable"
+        return (height, blockHash)
+    }
+
+    private func validationResultDescription(_ result: UInt32) -> String {
+        switch result {
+        case 0:
+            return "unset"
+        case 1:
+            return "consensus"
+        case 2:
+            return "cached_invalid"
+        case 3:
+            return "invalid_header"
+        case 4:
+            return "mutated"
+        case 5:
+            return "missing_prev"
+        case 6:
+            return "invalid_prev"
+        case 7:
+            return "time_future"
+        case 8:
+            return "header_low_work"
+        default:
+            return "unknown(\(result))"
         }
     }
 }

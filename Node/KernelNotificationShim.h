@@ -15,6 +15,10 @@ typedef void (*btck_NotifyWarningSet)(void* user_data, btck_Warning warning, con
 typedef void (*btck_NotifyWarningUnset)(void* user_data, btck_Warning warning);
 typedef void (*btck_NotifyFlushError)(void* user_data, const char* message, size_t message_len);
 typedef void (*btck_NotifyFatalError)(void* user_data, const char* message, size_t message_len);
+typedef void (*btck_ValidationInterfaceBlockChecked)(void* user_data, void* block, const void* state);
+typedef void (*btck_ValidationInterfacePoWValidBlock)(void* user_data, void* block, const void* entry);
+typedef void (*btck_ValidationInterfaceBlockConnected)(void* user_data, void* block, const void* entry);
+typedef void (*btck_ValidationInterfaceBlockDisconnected)(void* user_data, void* block, const void* entry);
 
 typedef struct {
     void* user_data;
@@ -28,10 +32,25 @@ typedef struct {
     btck_NotifyFatalError fatal_error;
 } btck_NotificationInterfaceCallbacks;
 
+typedef struct {
+    void* user_data;
+    btck_DestroyCallback user_data_destroy;
+    btck_ValidationInterfaceBlockChecked block_checked;
+    btck_ValidationInterfacePoWValidBlock pow_valid_block;
+    btck_ValidationInterfaceBlockConnected block_connected;
+    btck_ValidationInterfaceBlockDisconnected block_disconnected;
+} btck_ValidationInterfaceCallbacks;
+
 void btck_call_context_options_set_notifications(
     void* function,
     void* context_options,
     btck_NotificationInterfaceCallbacks notifications
+);
+
+void btck_call_context_options_set_validation_interface(
+    void* function,
+    void* context_options,
+    btck_ValidationInterfaceCallbacks validation_interface
 );
 
 #endif
