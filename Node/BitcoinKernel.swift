@@ -4,6 +4,11 @@ import OSLog
 
 private let kernelLogCategoryAll: UInt8 = 0
 private let kernelLogLevelInfo: UInt8 = 2
+private let kernelSynchronizationStateInitReindex: UInt8 = 0
+private let kernelSynchronizationStateInitDownload: UInt8 = 1
+private let kernelSynchronizationStatePostInit: UInt8 = 2
+private let kernelWarningUnknownNewRulesActivated: UInt8 = 0
+private let kernelWarningLargeWorkInvalidChain: UInt8 = 1
 
 struct ChainTip: Equatable, Sendable {
     let height: Int
@@ -88,9 +93,9 @@ enum BitcoinKernelError: LocalizedError {
 }
 
 final class BitcoinKernel {
-    private static let logger = Logger(subsystem: "nl.sprovoost.Node", category: "BitcoinKernel")
+    fileprivate static let logger = Logger(subsystem: "nl.sprovoost.Node", category: "BitcoinKernel")
     private static let serializedBlockHeaderLength = 80
-    private static let kernelLogCallback: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int) -> Void = { _, message, messageLength in
+    fileprivate static let kernelLogCallback: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int) -> Void = { _, message, messageLength in
         guard let message else {
             return
         }
@@ -102,6 +107,62 @@ final class BitcoinKernel {
         }
 
         BitcoinKernel.logger.info("\(trimmedMessage, privacy: .public)")
+    }
+    fileprivate static let kernelNotificationDestroyCallback: @convention(c) (UnsafeMutableRawPointer?) -> Void = { userData in
+        guard let userData else {
+            return
+        }
+
+        Unmanaged<KernelNotificationSink>.fromOpaque(userData).release()
+    }
+    fileprivate static let kernelBlockTipCallback: @convention(c) (UnsafeMutableRawPointer?, UInt8, UnsafeRawPointer?, Double) -> Void = { userData, state, entry, verificationProgress in
+        guard let sink = notificationSink(from: userData) else {
+            return
+        }
+
+        sink.observeBlockTip(state: state, entry: entry, verificationProgress: verificationProgress)
+    }
+    fileprivate static let kernelHeaderTipCallback: @convention(c) (UnsafeMutableRawPointer?, UInt8, Int64, Int64, Int32) -> Void = { userData, state, height, timestamp, presync in
+        guard let sink = notificationSink(from: userData) else {
+            return
+        }
+
+        sink.logHeaderTip(state: state, height: height, timestamp: timestamp, presync: presync != 0)
+    }
+    fileprivate static let kernelProgressCallback: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int, Int32, Int32) -> Void = { userData, title, titleLength, progressPercent, resumePossible in
+        guard let sink = notificationSink(from: userData) else {
+            return
+        }
+
+        sink.logProgress(title: string(from: title, length: titleLength), progressPercent: progressPercent, resumePossible: resumePossible != 0)
+    }
+    fileprivate static let kernelWarningSetCallback: @convention(c) (UnsafeMutableRawPointer?, UInt8, UnsafePointer<CChar>?, Int) -> Void = { userData, warning, message, messageLength in
+        guard let sink = notificationSink(from: userData) else {
+            return
+        }
+
+        sink.logWarningSet(warning: warning, message: string(from: message, length: messageLength))
+    }
+    fileprivate static let kernelWarningUnsetCallback: @convention(c) (UnsafeMutableRawPointer?, UInt8) -> Void = { userData, warning in
+        guard let sink = notificationSink(from: userData) else {
+            return
+        }
+
+        sink.observeWarningUnset(warning: warning)
+    }
+    fileprivate static let kernelFlushErrorCallback: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int) -> Void = { userData, message, messageLength in
+        guard let sink = notificationSink(from: userData) else {
+            return
+        }
+
+        sink.logFlushError(message: string(from: message, length: messageLength))
+    }
+    fileprivate static let kernelFatalErrorCallback: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int) -> Void = { userData, message, messageLength in
+        guard let sink = notificationSink(from: userData) else {
+            return
+        }
+
+        sink.logFatalError(message: string(from: message, length: messageLength))
     }
 
     private let library: LoadedBitcoinKernel
@@ -129,6 +190,7 @@ final class BitcoinKernel {
             let contextOptions = try library.makeContextOptions()
             defer { library.btck_context_options_destroy(contextOptions) }
             library.btck_context_options_set_chainparams(contextOptions, chainParameters)
+            library.setNotifications(contextOptions, sink: KernelNotificationSink(library: library))
 
             guard let context = library.btck_context_create(contextOptions) else {
                 throw BitcoinKernelError.contextCreationFailed
@@ -298,6 +360,23 @@ final class BitcoinKernel {
             return false
         }
     }
+
+    fileprivate static func notificationSink(from userData: UnsafeMutableRawPointer?) -> KernelNotificationSink? {
+        guard let userData else {
+            return nil
+        }
+
+        return Unmanaged<KernelNotificationSink>.fromOpaque(userData).takeUnretainedValue()
+    }
+
+    fileprivate static func string(from rawString: UnsafePointer<CChar>?, length: Int) -> String {
+        guard let rawString, length > 0 else {
+            return ""
+        }
+
+        return String(decoding: UnsafeBufferPointer(start: UnsafePointer<UInt8>(OpaquePointer(rawString)), count: length), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
 
 private final class LoadedBitcoinKernel {
@@ -308,6 +387,7 @@ private final class LoadedBitcoinKernel {
 
     private let handle: UnsafeMutableRawPointer
 
+    let btck_context_options_set_notifications_raw: UnsafeMutableRawPointer
     let btck_logging_set_level_category: @convention(c) (LogCategory, LogLevel) -> Void
     let btck_logging_enable_category: @convention(c) (LogCategory) -> Void
     let btck_logging_connection_create: @convention(c) (LogCallback?, UnsafeMutableRawPointer?, (@convention(c) (UnsafeMutableRawPointer?) -> Void)?) -> OpaquePointer?
@@ -366,7 +446,15 @@ private final class LoadedBitcoinKernel {
             return unsafeBitCast(rawSymbol, to: Function.self)
         }
 
+        func loadRawSymbol(_ symbol: String) throws -> UnsafeMutableRawPointer {
+            guard let rawSymbol = dlsym(handle, symbol) else {
+                throw BitcoinKernelError.symbolMissing(symbol)
+            }
+            return rawSymbol
+        }
+
         self.handle = handle
+        btck_context_options_set_notifications_raw = try loadRawSymbol("btck_context_options_set_notifications")
         btck_logging_set_level_category = try loadSymbol("btck_logging_set_level_category")
         btck_logging_enable_category = try loadSymbol("btck_logging_enable_category")
         btck_logging_connection_create = try loadSymbol("btck_logging_connection_create")
@@ -421,6 +509,29 @@ private final class LoadedBitcoinKernel {
         return btck_logging_connection_create(logCallback, nil, nil)
     }
 
+    func setNotifications(_ contextOptions: OpaquePointer, sink: KernelNotificationSink) {
+        let retainedSink = Unmanaged.passRetained(sink)
+        let callbacks = btck_NotificationInterfaceCallbacks(
+            user_data: retainedSink.toOpaque(),
+            user_data_destroy: BitcoinKernel.kernelNotificationDestroyCallback,
+            // Keep these callbacks wired so the C API path stays exercised, but rely on the
+            // kernel's own log lines for the user-visible signal to avoid redundant noise.
+            block_tip: BitcoinKernel.kernelBlockTipCallback,
+            header_tip: BitcoinKernel.kernelHeaderTipCallback,
+            progress: BitcoinKernel.kernelProgressCallback,
+            warning_set: BitcoinKernel.kernelWarningSetCallback,
+            warning_unset: BitcoinKernel.kernelWarningUnsetCallback,
+            flush_error: BitcoinKernel.kernelFlushErrorCallback,
+            fatal_error: BitcoinKernel.kernelFatalErrorCallback
+        )
+
+        btck_call_context_options_set_notifications(
+            btck_context_options_set_notifications_raw,
+            UnsafeMutableRawPointer(contextOptions),
+            callbacks
+        )
+    }
+
     func makeContextOptions() throws -> OpaquePointer {
         guard let contextOptions = btck_context_options_create() else {
             throw BitcoinKernelError.contextOptionsCreationFailed
@@ -451,5 +562,83 @@ private final class LoadedBitcoinKernel {
         ])
 
         return paths
+    }
+}
+
+private final class KernelNotificationSink {
+    private let library: LoadedBitcoinKernel
+
+    init(library: LoadedBitcoinKernel) {
+        self.library = library
+    }
+
+    func observeBlockTip(state: UInt8, entry: UnsafeRawPointer?, verificationProgress: Double) {
+        guard let entry else {
+            return
+        }
+
+        let opaqueEntry = OpaquePointer(entry)
+        // Keep this notification path exercised, but silence it because the kernel's UpdateTip
+        // log line already provides a better user-visible tip update message.
+        _ = library.btck_block_tree_entry_get_height(opaqueEntry)
+        _ = library.btck_block_tree_entry_get_block_hash(opaqueEntry).map(library.hexString(for:))
+        _ = state
+        _ = verificationProgress
+    }
+
+    func observeWarningUnset(warning: UInt8) {
+        // Keep this callback wired for coverage, but silence "cleared" messages because they are
+        // mostly state resets and add noise without actionable information.
+        _ = warningDescription(warning)
+    }
+
+    func logHeaderTip(state: UInt8, height: Int64, timestamp: Int64, presync: Bool) {
+        BitcoinKernel.logger.info(
+            "Kernel header tip height \(height, privacy: .public) state \(self.synchronizationStateDescription(state), privacy: .public) timestamp \(timestamp, privacy: .public) presync \(presync, privacy: .public)"
+        )
+    }
+
+    func logProgress(title: String, progressPercent: Int32, resumePossible: Bool) {
+        BitcoinKernel.logger.info(
+            "Kernel progress \(title, privacy: .public) \(progressPercent, privacy: .public)% resumePossible \(resumePossible, privacy: .public)"
+        )
+    }
+
+    func logWarningSet(warning: UInt8, message: String) {
+        BitcoinKernel.logger.warning(
+            "Kernel warning \(self.warningDescription(warning), privacy: .public): \(message, privacy: .public)"
+        )
+    }
+
+    func logFlushError(message: String) {
+        BitcoinKernel.logger.error("Kernel flush error: \(message, privacy: .public)")
+    }
+
+    func logFatalError(message: String) {
+        BitcoinKernel.logger.fault("Kernel fatal error: \(message, privacy: .public)")
+    }
+
+    private func synchronizationStateDescription(_ state: UInt8) -> String {
+        switch state {
+        case kernelSynchronizationStateInitReindex:
+            return "init_reindex"
+        case kernelSynchronizationStateInitDownload:
+            return "init_download"
+        case kernelSynchronizationStatePostInit:
+            return "post_init"
+        default:
+            return "unknown(\(state))"
+        }
+    }
+
+    private func warningDescription(_ warning: UInt8) -> String {
+        switch warning {
+        case kernelWarningUnknownNewRulesActivated:
+            return "unknown_new_rules_activated"
+        case kernelWarningLargeWorkInvalidChain:
+            return "large_work_invalid_chain"
+        default:
+            return "unknown(\(warning))"
+        }
     }
 }
