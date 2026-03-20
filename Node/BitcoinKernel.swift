@@ -598,11 +598,21 @@ final class BitcoinKernel {
             }
             return transaction
         }
+        defer { library.btck_transaction_destroy(transaction) }
 
-        return (transaction, txid)
+        guard let copiedTransaction = library.btck_transaction_copy(transaction) else {
+            throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to copy the recreated second transaction.")
+        }
+
+        return (copiedTransaction, txid)
     }
 
     private func verifySecondTransaction(_ transaction: OpaquePointer, txid: String, in block: OpaquePointer) throws {
+        guard let copiedTransaction = library.btck_transaction_copy(transaction) else {
+            throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to copy the second transaction for verification.")
+        }
+        defer { library.btck_transaction_destroy(copiedTransaction) }
+
         guard let blockHash = library.btck_block_get_hash(block) else {
             throw BitcoinKernelError.blockHashUnavailable
         }
@@ -617,72 +627,147 @@ final class BitcoinKernel {
         }
         defer { library.btck_block_spent_outputs_destroy(blockSpentOutputs) }
 
+        guard let copiedBlockSpentOutputs = library.btck_block_spent_outputs_copy(blockSpentOutputs) else {
+            throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to copy the processed block spent outputs.")
+        }
+        defer { library.btck_block_spent_outputs_destroy(copiedBlockSpentOutputs) }
+
         // This is a post-acceptance re-validation step. Block undo data excludes the coinbase
         // transaction, so transaction 1 maps to undo index 0. Tx1 is also a safe starting point:
         // a valid tx1 cannot spend the preceding coinbase, and without a public chainstate coin
         // lookup equivalent to CCoinsView::GetCoin we currently depend on undo data for prevouts.
-        guard library.btck_block_spent_outputs_count(blockSpentOutputs) > 0,
-              let transactionSpentOutputs = library.btck_block_spent_outputs_get_transaction_spent_outputs_at(blockSpentOutputs, 0) else {
+        guard library.btck_block_spent_outputs_count(copiedBlockSpentOutputs) > 0,
+              let transactionSpentOutputs = library.btck_block_spent_outputs_get_transaction_spent_outputs_at(copiedBlockSpentOutputs, 0) else {
             throw BitcoinKernelError.secondTransactionSpentOutputsUnavailable
         }
+        guard let copiedTransactionSpentOutputs = library.btck_transaction_spent_outputs_copy(transactionSpentOutputs) else {
+            throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to copy the second transaction spent outputs.")
+        }
+        defer { library.btck_transaction_spent_outputs_destroy(copiedTransactionSpentOutputs) }
 
-        let inputCount = Int(library.btck_transaction_count_inputs(transaction))
-        let spentOutputCount = Int(library.btck_transaction_spent_outputs_count(transactionSpentOutputs))
+        let inputCount = Int(library.btck_transaction_count_inputs(copiedTransaction))
+        let spentOutputCount = Int(library.btck_transaction_spent_outputs_count(copiedTransactionSpentOutputs))
         guard spentOutputCount == inputCount else {
             throw BitcoinKernelError.secondTransactionSpentOutputsMismatch(expected: inputCount, actual: spentOutputCount)
         }
 
         var spentOutputs: [OpaquePointer?] = []
         spentOutputs.reserveCapacity(inputCount)
+        defer {
+            for spentOutput in spentOutputs {
+                if let spentOutput {
+                    library.btck_transaction_output_destroy(spentOutput)
+                }
+            }
+        }
 
         for inputIndex in 0..<inputCount {
-            guard let input = library.btck_transaction_get_input_at(transaction, inputIndex) else {
+            guard let borrowedInput = library.btck_transaction_get_input_at(copiedTransaction, inputIndex) else {
                 throw BitcoinKernelError.secondTransactionInspectionFailed("Missing input \(inputIndex).")
             }
-            guard let outPoint = library.btck_transaction_input_get_out_point(input) else {
+            guard let input = library.btck_transaction_input_copy(borrowedInput) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to copy input \(inputIndex).")
+            }
+            defer { library.btck_transaction_input_destroy(input) }
+
+            guard let borrowedOutPoint = library.btck_transaction_input_get_out_point(input) else {
                 throw BitcoinKernelError.secondTransactionInspectionFailed("Missing outpoint for input \(inputIndex).")
             }
+            guard let outPoint = library.btck_transaction_out_point_copy(borrowedOutPoint) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to copy the outpoint for input \(inputIndex).")
+            }
+            defer { library.btck_transaction_out_point_destroy(outPoint) }
             _ = library.btck_transaction_out_point_get_index(outPoint)
-            guard let previousTxid = library.btck_transaction_out_point_get_txid(outPoint) else {
+            guard let borrowedPreviousTxid = library.btck_transaction_out_point_get_txid(outPoint) else {
                 throw BitcoinKernelError.secondTransactionInspectionFailed("Missing prevout txid for input \(inputIndex).")
+            }
+            guard let previousTxid = library.btck_txid_copy(borrowedPreviousTxid) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to copy the prevout txid for input \(inputIndex).")
+            }
+            defer { library.btck_txid_destroy(previousTxid) }
+            guard library.btck_txid_equals(previousTxid, borrowedPreviousTxid) == 1 else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("The copied prevout txid for input \(inputIndex) did not match the original.")
             }
             _ = library.txidString(for: previousTxid)
 
-            guard let coin = library.btck_transaction_spent_outputs_get_coin_at(transactionSpentOutputs, inputIndex) else {
+            guard let borrowedCoin = library.btck_transaction_spent_outputs_get_coin_at(copiedTransactionSpentOutputs, inputIndex) else {
                 throw BitcoinKernelError.secondTransactionInspectionFailed("Missing spent coin for input \(inputIndex).")
             }
+            guard let coin = library.btck_coin_copy(borrowedCoin) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to copy the spent coin for input \(inputIndex).")
+            }
+            defer { library.btck_coin_destroy(coin) }
             _ = library.btck_coin_confirmation_height(coin)
             _ = library.btck_coin_is_coinbase(coin)
 
-            guard let spentOutput = library.btck_coin_get_output(coin) else {
+            guard let borrowedSpentOutput = library.btck_coin_get_output(coin) else {
                 throw BitcoinKernelError.secondTransactionInspectionFailed("Missing spent output for input \(inputIndex).")
             }
-            spentOutputs.append(spentOutput)
+            guard let spentOutput = library.btck_transaction_output_copy(borrowedSpentOutput) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to copy the spent output for input \(inputIndex).")
+            }
+            defer { library.btck_transaction_output_destroy(spentOutput) }
+
+            guard let borrowedScriptPubkey = library.btck_transaction_output_get_script_pubkey(spentOutput) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("Missing script pubkey for input \(inputIndex).")
+            }
+            guard let copiedScriptPubkey = library.btck_script_pubkey_copy(borrowedScriptPubkey) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to copy the spent script pubkey for input \(inputIndex).")
+            }
+            defer { library.btck_script_pubkey_destroy(copiedScriptPubkey) }
+
+            let recreatedScriptPubkey = try recreateScriptPubkey(copiedScriptPubkey)
+            defer { library.btck_script_pubkey_destroy(recreatedScriptPubkey) }
+
+            let amount = library.btck_transaction_output_get_amount(spentOutput)
+            guard let recreatedSpentOutput = library.btck_transaction_output_create(recreatedScriptPubkey, amount) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to reconstruct the spent output for input \(inputIndex).")
+            }
+
+            guard let reconstructedScriptPubkey = library.btck_transaction_output_get_script_pubkey(recreatedSpentOutput) else {
+                library.btck_transaction_output_destroy(recreatedSpentOutput)
+                throw BitcoinKernelError.secondTransactionInspectionFailed("Missing reconstructed script pubkey for input \(inputIndex).")
+            }
+            guard library.btck_transaction_output_get_amount(recreatedSpentOutput) == amount else {
+                library.btck_transaction_output_destroy(recreatedSpentOutput)
+                throw BitcoinKernelError.secondTransactionInspectionFailed("The reconstructed spent output amount did not match for input \(inputIndex).")
+            }
+
+            let reconstructedScriptBytes = try serializeScriptPubkey(reconstructedScriptPubkey)
+            let originalScriptBytes = try serializeScriptPubkey(copiedScriptPubkey)
+            guard reconstructedScriptBytes == originalScriptBytes else {
+                library.btck_transaction_output_destroy(recreatedSpentOutput)
+                throw BitcoinKernelError.secondTransactionInspectionFailed("The reconstructed spent script pubkey bytes did not match for input \(inputIndex).")
+            }
+
+            spentOutputs.append(recreatedSpentOutput)
         }
 
         let precomputedTransactionData = spentOutputs.withUnsafeBufferPointer { spentOutputsBuffer in
-            library.btck_precomputed_transaction_data_create(transaction, spentOutputsBuffer.baseAddress, spentOutputsBuffer.count)
+            library.btck_precomputed_transaction_data_create(copiedTransaction, spentOutputsBuffer.baseAddress, spentOutputsBuffer.count)
         }
         guard let precomputedTransactionData else {
             throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to create precomputed transaction data.")
         }
         defer { library.btck_precomputed_transaction_data_destroy(precomputedTransactionData) }
 
+        guard let copiedPrecomputedTransactionData = library.btck_precomputed_transaction_data_copy(precomputedTransactionData) else {
+            throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to copy precomputed transaction data.")
+        }
+        defer { library.btck_precomputed_transaction_data_destroy(copiedPrecomputedTransactionData) }
+
         for inputIndex in 0..<spentOutputs.count {
             guard let spentOutput = spentOutputs[inputIndex],
                   let scriptPubkey = library.btck_transaction_output_get_script_pubkey(spentOutput) else {
                 throw BitcoinKernelError.secondTransactionInspectionFailed("Missing script pubkey for input \(inputIndex).")
             }
-            let recreatedScriptPubkey = try recreateScriptPubkey(scriptPubkey)
-            defer { library.btck_script_pubkey_destroy(recreatedScriptPubkey) }
-
             let amount = library.btck_transaction_output_get_amount(spentOutput)
             var status = kernelScriptVerifyStatusOK
             let verified = library.btck_script_pubkey_verify(
-                recreatedScriptPubkey,
+                scriptPubkey,
                 amount,
-                transaction,
-                precomputedTransactionData,
+                copiedTransaction,
+                copiedPrecomputedTransactionData,
                 UInt32(inputIndex),
                 kernelScriptVerificationFlagsAll,
                 &status
@@ -979,6 +1064,7 @@ private final class LoadedBitcoinKernel {
     let btck_block_to_bytes: @convention(c) (OpaquePointer?, WriteBytesCallback?, UnsafeMutableRawPointer?) -> Int32
     let btck_block_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_transaction_create: @convention(c) (UnsafeRawPointer?, Int) -> OpaquePointer?
+    let btck_transaction_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_transaction_to_bytes: @convention(c) (OpaquePointer?, WriteBytesCallback?, UnsafeMutableRawPointer?) -> Int32
     let btck_transaction_count_outputs: @convention(c) (OpaquePointer?) -> Int
     let btck_transaction_get_output_at: @convention(c) (OpaquePointer?, Int) -> OpaquePointer?
@@ -987,29 +1073,46 @@ private final class LoadedBitcoinKernel {
     let btck_transaction_get_txid: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_transaction_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_precomputed_transaction_data_create: @convention(c) (OpaquePointer?, UnsafePointer<OpaquePointer?>?, Int) -> OpaquePointer?
+    let btck_precomputed_transaction_data_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_precomputed_transaction_data_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_script_pubkey_verify: @convention(c) (OpaquePointer?, Int64, OpaquePointer?, OpaquePointer?, UInt32, UInt32, UnsafeMutablePointer<UInt8>?) -> Int32
+    let btck_script_pubkey_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_script_pubkey_create: @convention(c) (UnsafeRawPointer?, Int) -> OpaquePointer?
     let btck_script_pubkey_to_bytes: @convention(c) (OpaquePointer?, WriteBytesCallback?, UnsafeMutableRawPointer?) -> Int32
     let btck_script_pubkey_destroy: @convention(c) (OpaquePointer?) -> Void
+    let btck_transaction_output_create: @convention(c) (OpaquePointer?, Int64) -> OpaquePointer?
     let btck_transaction_output_get_script_pubkey: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_transaction_output_get_amount: @convention(c) (OpaquePointer?) -> Int64
+    let btck_transaction_output_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_transaction_output_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_chainstate_manager_process_block_header: @convention(c) (OpaquePointer?, OpaquePointer?, OpaquePointer?) -> Int32
     let btck_chainstate_manager_process_block: @convention(c) (OpaquePointer?, OpaquePointer?, UnsafeMutablePointer<Int32>?) -> Int32
     let btck_chainstate_manager_get_block_tree_entry_by_hash: @convention(c) (OpaquePointer?, OpaquePointer?) -> OpaquePointer?
     let btck_block_spent_outputs_read: @convention(c) (OpaquePointer?, OpaquePointer?) -> OpaquePointer?
+    let btck_block_spent_outputs_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_block_spent_outputs_count: @convention(c) (OpaquePointer?) -> Int
     let btck_block_spent_outputs_get_transaction_spent_outputs_at: @convention(c) (OpaquePointer?, Int) -> OpaquePointer?
     let btck_block_spent_outputs_destroy: @convention(c) (OpaquePointer?) -> Void
+    let btck_transaction_spent_outputs_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_transaction_spent_outputs_count: @convention(c) (OpaquePointer?) -> Int
     let btck_transaction_spent_outputs_get_coin_at: @convention(c) (OpaquePointer?, Int) -> OpaquePointer?
+    let btck_transaction_spent_outputs_destroy: @convention(c) (OpaquePointer?) -> Void
+    let btck_transaction_input_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_transaction_input_get_out_point: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_transaction_input_destroy: @convention(c) (OpaquePointer?) -> Void
+    let btck_transaction_out_point_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_transaction_out_point_get_index: @convention(c) (OpaquePointer?) -> UInt32
     let btck_transaction_out_point_get_txid: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_transaction_out_point_destroy: @convention(c) (OpaquePointer?) -> Void
+    let btck_txid_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_txid_equals: @convention(c) (OpaquePointer?, OpaquePointer?) -> Int32
     let btck_txid_to_bytes: @convention(c) (OpaquePointer?, UnsafeMutablePointer<UInt8>?) -> Void
+    let btck_txid_destroy: @convention(c) (OpaquePointer?) -> Void
+    let btck_coin_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_coin_confirmation_height: @convention(c) (OpaquePointer?) -> UInt32
     let btck_coin_is_coinbase: @convention(c) (OpaquePointer?) -> Int32
     let btck_coin_get_output: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_coin_destroy: @convention(c) (OpaquePointer?) -> Void
 
     init() throws {
         let candidates = Self.candidateLibraryPaths()
@@ -1098,6 +1201,7 @@ private final class LoadedBitcoinKernel {
         btck_block_to_bytes = try loadSymbol("btck_block_to_bytes")
         btck_block_destroy = try loadSymbol("btck_block_destroy")
         btck_transaction_create = try loadSymbol("btck_transaction_create")
+        btck_transaction_copy = try loadSymbol("btck_transaction_copy")
         btck_transaction_to_bytes = try loadSymbol("btck_transaction_to_bytes")
         btck_transaction_count_outputs = try loadSymbol("btck_transaction_count_outputs")
         btck_transaction_get_output_at = try loadSymbol("btck_transaction_get_output_at")
@@ -1106,29 +1210,46 @@ private final class LoadedBitcoinKernel {
         btck_transaction_get_txid = try loadSymbol("btck_transaction_get_txid")
         btck_transaction_destroy = try loadSymbol("btck_transaction_destroy")
         btck_precomputed_transaction_data_create = try loadSymbol("btck_precomputed_transaction_data_create")
+        btck_precomputed_transaction_data_copy = try loadSymbol("btck_precomputed_transaction_data_copy")
         btck_precomputed_transaction_data_destroy = try loadSymbol("btck_precomputed_transaction_data_destroy")
         btck_script_pubkey_verify = try loadSymbol("btck_script_pubkey_verify")
+        btck_script_pubkey_copy = try loadSymbol("btck_script_pubkey_copy")
         btck_script_pubkey_create = try loadSymbol("btck_script_pubkey_create")
         btck_script_pubkey_to_bytes = try loadSymbol("btck_script_pubkey_to_bytes")
         btck_script_pubkey_destroy = try loadSymbol("btck_script_pubkey_destroy")
+        btck_transaction_output_create = try loadSymbol("btck_transaction_output_create")
         btck_transaction_output_get_script_pubkey = try loadSymbol("btck_transaction_output_get_script_pubkey")
         btck_transaction_output_get_amount = try loadSymbol("btck_transaction_output_get_amount")
+        btck_transaction_output_copy = try loadSymbol("btck_transaction_output_copy")
+        btck_transaction_output_destroy = try loadSymbol("btck_transaction_output_destroy")
         btck_chainstate_manager_process_block_header = try loadSymbol("btck_chainstate_manager_process_block_header")
         btck_chainstate_manager_process_block = try loadSymbol("btck_chainstate_manager_process_block")
         btck_chainstate_manager_get_block_tree_entry_by_hash = try loadSymbol("btck_chainstate_manager_get_block_tree_entry_by_hash")
         btck_block_spent_outputs_read = try loadSymbol("btck_block_spent_outputs_read")
+        btck_block_spent_outputs_copy = try loadSymbol("btck_block_spent_outputs_copy")
         btck_block_spent_outputs_count = try loadSymbol("btck_block_spent_outputs_count")
         btck_block_spent_outputs_get_transaction_spent_outputs_at = try loadSymbol("btck_block_spent_outputs_get_transaction_spent_outputs_at")
         btck_block_spent_outputs_destroy = try loadSymbol("btck_block_spent_outputs_destroy")
+        btck_transaction_spent_outputs_copy = try loadSymbol("btck_transaction_spent_outputs_copy")
         btck_transaction_spent_outputs_count = try loadSymbol("btck_transaction_spent_outputs_count")
         btck_transaction_spent_outputs_get_coin_at = try loadSymbol("btck_transaction_spent_outputs_get_coin_at")
+        btck_transaction_spent_outputs_destroy = try loadSymbol("btck_transaction_spent_outputs_destroy")
+        btck_transaction_input_copy = try loadSymbol("btck_transaction_input_copy")
         btck_transaction_input_get_out_point = try loadSymbol("btck_transaction_input_get_out_point")
+        btck_transaction_input_destroy = try loadSymbol("btck_transaction_input_destroy")
+        btck_transaction_out_point_copy = try loadSymbol("btck_transaction_out_point_copy")
         btck_transaction_out_point_get_index = try loadSymbol("btck_transaction_out_point_get_index")
         btck_transaction_out_point_get_txid = try loadSymbol("btck_transaction_out_point_get_txid")
+        btck_transaction_out_point_destroy = try loadSymbol("btck_transaction_out_point_destroy")
+        btck_txid_copy = try loadSymbol("btck_txid_copy")
+        btck_txid_equals = try loadSymbol("btck_txid_equals")
         btck_txid_to_bytes = try loadSymbol("btck_txid_to_bytes")
+        btck_txid_destroy = try loadSymbol("btck_txid_destroy")
+        btck_coin_copy = try loadSymbol("btck_coin_copy")
         btck_coin_confirmation_height = try loadSymbol("btck_coin_confirmation_height")
         btck_coin_is_coinbase = try loadSymbol("btck_coin_is_coinbase")
         btck_coin_get_output = try loadSymbol("btck_coin_get_output")
+        btck_coin_destroy = try loadSymbol("btck_coin_destroy")
     }
 
     deinit {
