@@ -66,8 +66,10 @@ enum BitcoinKernelError: LocalizedError {
     case contextCreationFailed
     case contextCopyFailed
     case chainstateOptionsCreationFailed
+    case chainstateReindexSetupFailed(Int32)
     case chainstateLocked
     case chainstateCreationFailed
+    case chainstateReindexFailed(Int32)
     case blockTooShort(Int)
     case blockHeaderCreationFailed
     case blockHeaderHashUnavailable
@@ -120,10 +122,14 @@ enum BitcoinKernelError: LocalizedError {
             return "Failed to copy the kernel context."
         case .chainstateOptionsCreationFailed:
             return "Failed to create chainstate manager options."
+        case .chainstateReindexSetupFailed(let code):
+            return "Failed to configure kernel reindex options with code \(code)."
         case .chainstateLocked:
             return "The chainstate is already in use by another Node instance."
         case .chainstateCreationFailed:
             return "Failed to create chainstate manager."
+        case .chainstateReindexFailed(let code):
+            return "Kernel reindex failed with code \(code)."
         case .blockTooShort(let byteCount):
             return "Raw block is too short to contain a header (\(byteCount) bytes)."
         case .blockHeaderCreationFailed:
@@ -338,7 +344,7 @@ final class BitcoinKernel {
         #endif
     }
 
-    init(storageRoot: URL) throws {
+    init(storageRoot: URL, reindexMode: ReindexMode? = nil) throws {
         do {
             let library = try LoadedBitcoinKernel()
             self.library = library
@@ -400,6 +406,13 @@ final class BitcoinKernel {
             defer { library.btck_chainstate_manager_options_destroy(chainstateOptions) }
 
             library.btck_chainstate_manager_options_set_worker_threads_num(chainstateOptions, 1)
+            if let reindexMode {
+                let wipeBlockTreeDb: Int32 = reindexMode == .full ? 1 : 0
+                let result = library.btck_chainstate_manager_options_set_wipe_dbs(chainstateOptions, wipeBlockTreeDb, 1)
+                guard result == 0 else {
+                    throw BitcoinKernelError.chainstateReindexSetupFailed(result)
+                }
+            }
 
             guard let chainstateManager = library.btck_chainstate_manager_create(chainstateOptions) else {
                 if Self.isChainstateLocked(at: dataDirectory) {
@@ -408,6 +421,13 @@ final class BitcoinKernel {
                 throw BitcoinKernelError.chainstateCreationFailed
             }
             self.chainstateManager = chainstateManager
+
+            if reindexMode != nil {
+                let result = library.btck_chainstate_manager_import_blocks(chainstateManager, nil, nil, 0)
+                guard result == 0 else {
+                    throw BitcoinKernelError.chainstateReindexFailed(result)
+                }
+            }
 
             let restoredTip = try currentTip()
             Self.logger.info("Kernel opened at persisted tip height \(restoredTip.height, privacy: .public)")
@@ -1112,11 +1132,13 @@ private final class LoadedBitcoinKernel {
     let btck_context_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_chainstate_manager_options_create: @convention(c) (OpaquePointer?, UnsafePointer<CChar>?, Int, UnsafePointer<CChar>?, Int) -> OpaquePointer?
     let btck_chainstate_manager_options_set_worker_threads_num: @convention(c) (OpaquePointer?, Int32) -> Void
+    let btck_chainstate_manager_options_set_wipe_dbs: @convention(c) (OpaquePointer?, Int32, Int32) -> Int32
     let btck_chainstate_manager_options_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_chainstate_manager_create: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_chainstate_manager_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_chainstate_manager_get_best_entry: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_chainstate_manager_get_active_chain: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_chainstate_manager_import_blocks: @convention(c) (OpaquePointer?, UnsafeMutablePointer<UnsafePointer<CChar>?>?, UnsafeMutablePointer<Int>?, Int) -> Int32
     let btck_chain_get_height: @convention(c) (OpaquePointer?) -> Int32
     let btck_chain_get_by_height: @convention(c) (OpaquePointer?, Int32) -> OpaquePointer?
     let btck_chain_contains: @convention(c) (OpaquePointer?, OpaquePointer?) -> Int32
@@ -1253,11 +1275,13 @@ private final class LoadedBitcoinKernel {
         btck_context_destroy = try loadSymbol("btck_context_destroy")
         btck_chainstate_manager_options_create = try loadSymbol("btck_chainstate_manager_options_create")
         btck_chainstate_manager_options_set_worker_threads_num = try loadSymbol("btck_chainstate_manager_options_set_worker_threads_num")
+        btck_chainstate_manager_options_set_wipe_dbs = try loadSymbol("btck_chainstate_manager_options_set_wipe_dbs")
         btck_chainstate_manager_options_destroy = try loadSymbol("btck_chainstate_manager_options_destroy")
         btck_chainstate_manager_create = try loadSymbol("btck_chainstate_manager_create")
         btck_chainstate_manager_destroy = try loadSymbol("btck_chainstate_manager_destroy")
         btck_chainstate_manager_get_best_entry = try loadSymbol("btck_chainstate_manager_get_best_entry")
         btck_chainstate_manager_get_active_chain = try loadSymbol("btck_chainstate_manager_get_active_chain")
+        btck_chainstate_manager_import_blocks = try loadSymbol("btck_chainstate_manager_import_blocks")
         btck_chain_get_height = try loadSymbol("btck_chain_get_height")
         btck_chain_get_by_height = try loadSymbol("btck_chain_get_by_height")
         btck_chain_contains = try loadSymbol("btck_chain_contains")

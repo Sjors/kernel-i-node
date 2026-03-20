@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ContentView: View {
     let viewModel: NodeViewModel
+    @State private var pendingReindexMode: ReindexMode?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -55,6 +56,29 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Spacer()
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Dangerous")
+                    .font(.headline)
+                    .foregroundStyle(.red)
+
+                Text("These actions restart the kernel and rebuild local validation state from the stored block files.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 12) {
+                    Button("Reindex Chainstate", role: .destructive) {
+                        pendingReindexMode = .chainstate
+                    }
+
+                    Button("Full Reindex", role: .destructive) {
+                        pendingReindexMode = .full
+                    }
+                }
+            }
         }
         .padding(24)
         #if os(macOS)
@@ -62,6 +86,31 @@ struct ContentView: View {
         #else
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         #endif
+        .confirmationDialog(
+            pendingReindexMode?.confirmationTitle ?? "Reindex",
+            isPresented: Binding(
+                get: { pendingReindexMode != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        pendingReindexMode = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let pendingReindexMode {
+                Button(pendingReindexMode.confirmationTitle, role: .destructive) {
+                    viewModel.requestReindex(pendingReindexMode)
+                    self.pendingReindexMode = nil
+                }
+            }
+
+            Button("Cancel", role: .cancel) {
+                pendingReindexMode = nil
+            }
+        } message: {
+            Text(pendingReindexMode?.confirmationMessage ?? "")
+        }
         .task {
             viewModel.startIfNeeded()
         }

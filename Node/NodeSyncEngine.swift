@@ -10,6 +10,47 @@ enum SyncPhase: Equatable {
     case failed(String)
 }
 
+enum ReindexMode: Equatable, Sendable {
+    case chainstate
+    case full
+
+    var restartStatusText: String {
+        switch self {
+        case .chainstate:
+            return "Restarting kernel for chainstate reindex"
+        case .full:
+            return "Restarting kernel for full reindex"
+        }
+    }
+
+    var openingStatusText: String {
+        switch self {
+        case .chainstate:
+            return "Opening kernel for chainstate reindex"
+        case .full:
+            return "Opening kernel for full reindex"
+        }
+    }
+
+    var confirmationTitle: String {
+        switch self {
+        case .chainstate:
+            return "Reindex Chainstate"
+        case .full:
+            return "Full Reindex"
+        }
+    }
+
+    var confirmationMessage: String {
+        switch self {
+        case .chainstate:
+            return "This wipes the chainstate database and rebuilds it from the stored block files. Sync will restart."
+        case .full:
+            return "This wipes both the block index and chainstate databases and rebuilds them from the stored block files. Sync will restart."
+        }
+    }
+}
+
 struct SyncSnapshot: Equatable {
     var phase: SyncPhase = .idle
     var statusText = "Idle"
@@ -37,6 +78,7 @@ final class NodeViewModel {
     private let syncEngine: NodeSyncEngine
     private var syncTask: Task<Void, Never>?
     private var isReconcilingSync = false
+    private var pendingReindexMode: ReindexMode?
 
     var snapshot = SyncSnapshot()
     var isSyncEnabled = true
@@ -68,6 +110,14 @@ final class NodeViewModel {
         syncEngine.refreshLoggingSettings()
     }
 
+    func requestReindex(_ mode: ReindexMode) {
+        pendingReindexMode = mode
+        isSyncEnabled = true
+        snapshot.phase = .preparing
+        snapshot.statusText = mode.restartStatusText
+        Task { await reconcileSyncState() }
+    }
+
     private func reconcileSyncState() async {
         guard !isReconcilingSync else { return }
 
@@ -75,9 +125,19 @@ final class NodeViewModel {
         defer { isReconcilingSync = false }
 
         while true {
+            if pendingReindexMode != nil, let syncTask {
+                syncEngine.interrupt()
+                syncTask.cancel()
+                await syncTask.value
+                self.syncTask = nil
+                continue
+            }
+
             if isSyncEnabled {
                 if syncTask == nil {
-                    start()
+                    let reindexMode = pendingReindexMode
+                    pendingReindexMode = nil
+                    start(reindexMode: reindexMode)
                 }
                 return
             }
@@ -96,7 +156,7 @@ final class NodeViewModel {
         }
     }
 
-    private func start() {
+    private func start(reindexMode: ReindexMode?) {
         let syncEngine = syncEngine
 
         syncTask = Task { [weak self] in
@@ -105,7 +165,7 @@ final class NodeViewModel {
             }
 
             do {
-                try await syncEngine.run { [weak self] snapshot in
+                try await syncEngine.run(reindexMode: reindexMode) { [weak self] snapshot in
                     await self?.apply(snapshot: snapshot)
                 }
             } catch is CancellationError {
@@ -196,15 +256,21 @@ struct NodeSyncEngine {
         self.storageRoot = storageRoot
     }
 
-    func run(update: @escaping @Sendable (SyncSnapshot) async -> Void) async throws {
-        var snapshot = SyncSnapshot(phase: .preparing, statusText: "Opening kernel", localHeight: 0, remoteHeight: 0, tipHash: "")
+    func run(reindexMode: ReindexMode? = nil, update: @escaping @Sendable (SyncSnapshot) async -> Void) async throws {
+        var snapshot = SyncSnapshot(
+            phase: .preparing,
+            statusText: reindexMode?.openingStatusText ?? "Opening kernel",
+            localHeight: 0,
+            remoteHeight: 0,
+            tipHash: ""
+        )
         await update(snapshot)
 
         guard BitcoinKernel.isSupportedOnCurrentPlatform else {
             throw BitcoinKernelError.unsupportedPlatform
         }
 
-        let kernel = try BitcoinKernel(storageRoot: storageRoot)
+        let kernel = try BitcoinKernel(storageRoot: storageRoot, reindexMode: reindexMode)
         runState.install(kernel)
         defer { runState.clear(kernel) }
 
