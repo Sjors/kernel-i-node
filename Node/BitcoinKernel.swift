@@ -2,6 +2,9 @@ import Darwin
 import Foundation
 import OSLog
 
+private let kernelLogCategoryAll: UInt8 = 0
+private let kernelLogLevelInfo: UInt8 = 2
+
 struct ChainTip: Equatable, Sendable {
     let height: Int
     let hash: String
@@ -87,7 +90,22 @@ enum BitcoinKernelError: LocalizedError {
 final class BitcoinKernel {
     private static let logger = Logger(subsystem: "nl.sprovoost.Node", category: "BitcoinKernel")
     private static let serializedBlockHeaderLength = 80
+    private static let kernelLogCallback: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int) -> Void = { _, message, messageLength in
+        guard let message else {
+            return
+        }
+
+        let rawMessage = String(decoding: UnsafeBufferPointer(start: UnsafePointer<UInt8>(OpaquePointer(message)), count: messageLength), as: UTF8.self)
+        let trimmedMessage = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedMessage.isEmpty else {
+            return
+        }
+
+        BitcoinKernel.logger.info("\(trimmedMessage, privacy: .public)")
+    }
+
     private let library: LoadedBitcoinKernel
+    private let loggingConnection: OpaquePointer?
     private let context: OpaquePointer
     private let chainstateManager: OpaquePointer
 
@@ -103,6 +121,7 @@ final class BitcoinKernel {
         do {
             let library = try LoadedBitcoinKernel()
             self.library = library
+            self.loggingConnection = library.makeLoggingConnection(logCallback: Self.kernelLogCallback)
 
             let chainParameters = try library.makeChainParameters()
             defer { library.btck_chain_parameters_destroy(chainParameters) }
@@ -162,6 +181,9 @@ final class BitcoinKernel {
     deinit {
         library.btck_chainstate_manager_destroy(chainstateManager)
         library.btck_context_destroy(context)
+        if let loggingConnection {
+            library.btck_logging_connection_destroy(loggingConnection)
+        }
     }
 
     func currentTip() throws -> ChainTip {
@@ -280,9 +302,16 @@ final class BitcoinKernel {
 
 private final class LoadedBitcoinKernel {
     typealias ChainType = UInt8
+    typealias LogCategory = UInt8
+    typealias LogLevel = UInt8
+    typealias LogCallback = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int) -> Void
 
     private let handle: UnsafeMutableRawPointer
 
+    let btck_logging_set_level_category: @convention(c) (LogCategory, LogLevel) -> Void
+    let btck_logging_enable_category: @convention(c) (LogCategory) -> Void
+    let btck_logging_connection_create: @convention(c) (LogCallback?, UnsafeMutableRawPointer?, (@convention(c) (UnsafeMutableRawPointer?) -> Void)?) -> OpaquePointer?
+    let btck_logging_connection_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_chain_parameters_create: @convention(c) (ChainType) -> OpaquePointer?
     let btck_chain_parameters_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_context_options_create: @convention(c) () -> OpaquePointer?
@@ -338,6 +367,10 @@ private final class LoadedBitcoinKernel {
         }
 
         self.handle = handle
+        btck_logging_set_level_category = try loadSymbol("btck_logging_set_level_category")
+        btck_logging_enable_category = try loadSymbol("btck_logging_enable_category")
+        btck_logging_connection_create = try loadSymbol("btck_logging_connection_create")
+        btck_logging_connection_destroy = try loadSymbol("btck_logging_connection_destroy")
         btck_chain_parameters_create = try loadSymbol("btck_chain_parameters_create")
         btck_chain_parameters_destroy = try loadSymbol("btck_chain_parameters_destroy")
         btck_context_options_create = try loadSymbol("btck_context_options_create")
@@ -380,6 +413,12 @@ private final class LoadedBitcoinKernel {
             throw BitcoinKernelError.chainParametersCreationFailed
         }
         return chainParameters
+    }
+
+    func makeLoggingConnection(logCallback: @escaping LogCallback) -> OpaquePointer? {
+        btck_logging_set_level_category(kernelLogCategoryAll, kernelLogLevelInfo)
+        btck_logging_enable_category(kernelLogCategoryAll)
+        return btck_logging_connection_create(logCallback, nil, nil)
     }
 
     func makeContextOptions() throws -> OpaquePointer {
