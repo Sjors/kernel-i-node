@@ -54,6 +54,8 @@ enum BitcoinKernelError: LocalizedError {
     case blockHeaderProcessingFailed(Int32)
     case blockHeaderValidationFailed(mode: UInt8, result: UInt32)
     case blockCreationFailed
+    case blockSerializationFailed
+    case blockSerializationMismatch
     case blockProcessingFailed(Int32)
     case secondTransactionSerializationFailed
     case secondTransactionCreationFailed
@@ -105,6 +107,10 @@ enum BitcoinKernelError: LocalizedError {
             return "Kernel block header validation failed with mode \(mode) and result \(result)."
         case .blockCreationFailed:
             return "Failed to parse raw block bytes."
+        case .blockSerializationFailed:
+            return "Failed to serialize the parsed block."
+        case .blockSerializationMismatch:
+            return "Serialized block bytes did not match the original raw block."
         case .blockProcessingFailed(let code):
             return "Kernel block processing failed with code \(code)."
         case .secondTransactionSerializationFailed:
@@ -388,6 +394,11 @@ final class BitcoinKernel {
         }
         defer { library.btck_block_destroy(block) }
 
+        let serializedBlock = try serializeBlock(block)
+        guard serializedBlock == rawBlock else {
+            throw BitcoinKernelError.blockSerializationMismatch
+        }
+
         let secondTransaction = try extractSecondTransaction(from: block)
         defer {
             if let secondTransaction {
@@ -537,11 +548,13 @@ final class BitcoinKernel {
                   let scriptPubkey = library.btck_transaction_output_get_script_pubkey(spentOutput) else {
                 throw BitcoinKernelError.secondTransactionInspectionFailed("Missing script pubkey for input \(inputIndex).")
             }
+            let recreatedScriptPubkey = try recreateScriptPubkey(scriptPubkey)
+            defer { library.btck_script_pubkey_destroy(recreatedScriptPubkey) }
 
             let amount = library.btck_transaction_output_get_amount(spentOutput)
             var status = kernelScriptVerifyStatusOK
             let verified = library.btck_script_pubkey_verify(
-                scriptPubkey,
+                recreatedScriptPubkey,
                 amount,
                 transaction,
                 precomputedTransactionData,
@@ -574,6 +587,49 @@ final class BitcoinKernel {
 
         guard result == 0, !collector.data.isEmpty else {
             throw BitcoinKernelError.secondTransactionSerializationFailed
+        }
+
+        return collector.data
+    }
+
+    private func serializeBlock(_ block: OpaquePointer) throws -> Data {
+        let collector = KernelByteCollector()
+        let result = library.btck_block_to_bytes(
+            block,
+            Self.kernelWriteBytesCallback,
+            Unmanaged.passUnretained(collector).toOpaque()
+        )
+
+        guard result == 0, !collector.data.isEmpty else {
+            throw BitcoinKernelError.blockSerializationFailed
+        }
+
+        return collector.data
+    }
+
+    private func recreateScriptPubkey(_ scriptPubkey: OpaquePointer) throws -> OpaquePointer {
+        let serializedScriptPubkey = try serializeScriptPubkey(scriptPubkey)
+        let recreatedScriptPubkey = serializedScriptPubkey.withUnsafeBytes { rawBuffer in
+            library.btck_script_pubkey_create(rawBuffer.baseAddress, rawBuffer.count)
+        }
+
+        guard let recreatedScriptPubkey else {
+            throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to recreate spent script pubkey bytes.")
+        }
+
+        return recreatedScriptPubkey
+    }
+
+    private func serializeScriptPubkey(_ scriptPubkey: OpaquePointer) throws -> Data {
+        let collector = KernelByteCollector()
+        let result = library.btck_script_pubkey_to_bytes(
+            scriptPubkey,
+            Self.kernelWriteBytesCallback,
+            Unmanaged.passUnretained(collector).toOpaque()
+        )
+
+        guard result == 0, !collector.data.isEmpty else {
+            throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to serialize spent script pubkey bytes.")
         }
 
         return collector.data
@@ -690,6 +746,7 @@ private final class LoadedBitcoinKernel {
     let btck_block_count_transactions: @convention(c) (OpaquePointer?) -> Int
     let btck_block_get_transaction_at: @convention(c) (OpaquePointer?, Int) -> OpaquePointer?
     let btck_block_get_hash: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_block_to_bytes: @convention(c) (OpaquePointer?, WriteBytesCallback?, UnsafeMutableRawPointer?) -> Int32
     let btck_block_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_transaction_create: @convention(c) (UnsafeRawPointer?, Int) -> OpaquePointer?
     let btck_transaction_to_bytes: @convention(c) (OpaquePointer?, WriteBytesCallback?, UnsafeMutableRawPointer?) -> Int32
@@ -702,6 +759,9 @@ private final class LoadedBitcoinKernel {
     let btck_precomputed_transaction_data_create: @convention(c) (OpaquePointer?, UnsafePointer<OpaquePointer?>?, Int) -> OpaquePointer?
     let btck_precomputed_transaction_data_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_script_pubkey_verify: @convention(c) (OpaquePointer?, Int64, OpaquePointer?, OpaquePointer?, UInt32, UInt32, UnsafeMutablePointer<UInt8>?) -> Int32
+    let btck_script_pubkey_create: @convention(c) (UnsafeRawPointer?, Int) -> OpaquePointer?
+    let btck_script_pubkey_to_bytes: @convention(c) (OpaquePointer?, WriteBytesCallback?, UnsafeMutableRawPointer?) -> Int32
+    let btck_script_pubkey_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_transaction_output_get_script_pubkey: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_transaction_output_get_amount: @convention(c) (OpaquePointer?) -> Int64
     let btck_chainstate_manager_process_block_header: @convention(c) (OpaquePointer?, OpaquePointer?, OpaquePointer?) -> Int32
@@ -792,6 +852,7 @@ private final class LoadedBitcoinKernel {
         btck_block_count_transactions = try loadSymbol("btck_block_count_transactions")
         btck_block_get_transaction_at = try loadSymbol("btck_block_get_transaction_at")
         btck_block_get_hash = try loadSymbol("btck_block_get_hash")
+        btck_block_to_bytes = try loadSymbol("btck_block_to_bytes")
         btck_block_destroy = try loadSymbol("btck_block_destroy")
         btck_transaction_create = try loadSymbol("btck_transaction_create")
         btck_transaction_to_bytes = try loadSymbol("btck_transaction_to_bytes")
@@ -804,6 +865,9 @@ private final class LoadedBitcoinKernel {
         btck_precomputed_transaction_data_create = try loadSymbol("btck_precomputed_transaction_data_create")
         btck_precomputed_transaction_data_destroy = try loadSymbol("btck_precomputed_transaction_data_destroy")
         btck_script_pubkey_verify = try loadSymbol("btck_script_pubkey_verify")
+        btck_script_pubkey_create = try loadSymbol("btck_script_pubkey_create")
+        btck_script_pubkey_to_bytes = try loadSymbol("btck_script_pubkey_to_bytes")
+        btck_script_pubkey_destroy = try loadSymbol("btck_script_pubkey_destroy")
         btck_transaction_output_get_script_pubkey = try loadSymbol("btck_transaction_output_get_script_pubkey")
         btck_transaction_output_get_amount = try loadSymbol("btck_transaction_output_get_amount")
         btck_chainstate_manager_process_block_header = try loadSymbol("btck_chainstate_manager_process_block_header")
