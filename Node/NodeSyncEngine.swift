@@ -196,7 +196,7 @@ struct NodeSyncEngine {
                 try Task.checkCancellation()
 
                 let rawBlock = try await client.fetchRawBlock(hash: block.id)
-                let tip = try kernel.process(rawBlock: rawBlock)
+                let tip = try kernel.process(rawBlock: rawBlock, expectedHash: block.id)
 
                 snapshot.localHeight = tip.height
                 snapshot.tipHash = tip.hash

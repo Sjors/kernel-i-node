@@ -30,4 +30,11 @@ struct NodeTests {
     @Test func chainstateLockedErrorHasHelpfulDescription() async throws {
         #expect(BitcoinKernelError.chainstateLocked.errorDescription == "The chainstate is already in use by another Node instance.")
     }
+
+    @Test func blockHeaderHashMismatchErrorHasHelpfulDescription() async throws {
+        #expect(
+            BitcoinKernelError.blockHeaderHashMismatch(expected: "expected-hash", actual: "actual-hash").errorDescription
+            == "Block header hash mismatch. Expected expected-hash, got actual-hash."
+        )
+    }
 }

@@ -7,6 +7,15 @@ struct ChainTip: Equatable, Sendable {
     let hash: String
 }
 
+struct BlockHeader: Equatable, Sendable {
+    let hash: String
+    let previousHash: String
+    let version: Int32
+    let timestamp: UInt32
+    let bits: UInt32
+    let nonce: UInt32
+}
+
 enum BitcoinKernelError: LocalizedError {
     case libraryNotFound([String])
     case libraryOpenFailed(String)
@@ -18,6 +27,10 @@ enum BitcoinKernelError: LocalizedError {
     case chainstateOptionsCreationFailed
     case chainstateLocked
     case chainstateCreationFailed
+    case blockTooShort(Int)
+    case blockHeaderCreationFailed
+    case blockHeaderHashUnavailable
+    case blockHeaderHashMismatch(expected: String, actual: String)
     case blockCreationFailed
     case blockProcessingFailed(Int32)
     case activeChainUnavailable
@@ -47,6 +60,14 @@ enum BitcoinKernelError: LocalizedError {
             return "The chainstate is already in use by another Node instance."
         case .chainstateCreationFailed:
             return "Failed to create chainstate manager."
+        case .blockTooShort(let byteCount):
+            return "Raw block is too short to contain a header (\(byteCount) bytes)."
+        case .blockHeaderCreationFailed:
+            return "Failed to parse raw block header bytes."
+        case .blockHeaderHashUnavailable:
+            return "Failed to read block header hash."
+        case let .blockHeaderHashMismatch(expected, actual):
+            return "Block header hash mismatch. Expected \(expected), got \(actual)."
         case .blockCreationFailed:
             return "Failed to parse raw block bytes."
         case .blockProcessingFailed(let code):
@@ -65,6 +86,7 @@ enum BitcoinKernelError: LocalizedError {
 
 final class BitcoinKernel {
     private static let logger = Logger(subsystem: "nl.sprovoost.Node", category: "BitcoinKernel")
+    private static let serializedBlockHeaderLength = 80
     private let library: LoadedBitcoinKernel
     private let context: OpaquePointer
     private let chainstateManager: OpaquePointer
@@ -155,8 +177,49 @@ final class BitcoinKernel {
         return ChainTip(height: height, hash: library.hexString(for: blockHash))
     }
 
+    func blockHeader(from rawBlock: Data, expectedHash: String? = nil) throws -> BlockHeader {
+        guard rawBlock.count >= Self.serializedBlockHeaderLength else {
+            throw BitcoinKernelError.blockTooShort(rawBlock.count)
+        }
+
+        let rawHeader = rawBlock.prefix(Self.serializedBlockHeaderLength)
+        let header = try rawHeader.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress,
+                  let header = library.btck_block_header_create(baseAddress, rawBuffer.count) else {
+                throw BitcoinKernelError.blockHeaderCreationFailed
+            }
+            return header
+        }
+        defer { library.btck_block_header_destroy(header) }
+
+        guard let blockHash = library.btck_block_header_get_hash(header) else {
+            throw BitcoinKernelError.blockHeaderHashUnavailable
+        }
+        defer { library.btck_block_hash_destroy(blockHash) }
+
+        let headerHash = library.hexString(for: blockHash)
+        if let expectedHash, headerHash.caseInsensitiveCompare(expectedHash) != .orderedSame {
+            throw BitcoinKernelError.blockHeaderHashMismatch(expected: expectedHash, actual: headerHash)
+        }
+
+        guard let previousHash = library.btck_block_header_get_prev_hash(header) else {
+            throw BitcoinKernelError.blockHashUnavailable
+        }
+
+        return BlockHeader(
+            hash: headerHash,
+            previousHash: library.hexString(for: previousHash),
+            version: library.btck_block_header_get_version(header),
+            timestamp: library.btck_block_header_get_timestamp(header),
+            bits: library.btck_block_header_get_bits(header),
+            nonce: library.btck_block_header_get_nonce(header)
+        )
+    }
+
     @discardableResult
-    func process(rawBlock: Data) throws -> ChainTip {
+    func process(rawBlock: Data, expectedHash: String? = nil) throws -> ChainTip {
+        _ = try blockHeader(from: rawBlock, expectedHash: expectedHash)
+
         let block = try rawBlock.withUnsafeBytes { rawBuffer in
             guard let baseAddress = rawBuffer.baseAddress,
                   let block = library.btck_block_create(baseAddress, rawBuffer.count) else {
@@ -238,7 +301,16 @@ private final class LoadedBitcoinKernel {
     let btck_chain_get_by_height: @convention(c) (OpaquePointer?, Int32) -> OpaquePointer?
     let btck_block_tree_entry_get_height: @convention(c) (OpaquePointer?) -> Int32
     let btck_block_tree_entry_get_block_hash: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_block_header_create: @convention(c) (UnsafeRawPointer?, Int) -> OpaquePointer?
+    let btck_block_header_get_hash: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_block_header_get_prev_hash: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_block_header_get_timestamp: @convention(c) (OpaquePointer?) -> UInt32
+    let btck_block_header_get_bits: @convention(c) (OpaquePointer?) -> UInt32
+    let btck_block_header_get_version: @convention(c) (OpaquePointer?) -> Int32
+    let btck_block_header_get_nonce: @convention(c) (OpaquePointer?) -> UInt32
+    let btck_block_header_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_block_hash_to_bytes: @convention(c) (OpaquePointer?, UnsafeMutablePointer<UInt8>?) -> Void
+    let btck_block_hash_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_block_create: @convention(c) (UnsafeRawPointer?, Int) -> OpaquePointer?
     let btck_block_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_chainstate_manager_process_block: @convention(c) (OpaquePointer?, OpaquePointer?, UnsafeMutablePointer<Int32>?) -> Int32
@@ -284,7 +356,16 @@ private final class LoadedBitcoinKernel {
         btck_chain_get_by_height = try loadSymbol("btck_chain_get_by_height")
         btck_block_tree_entry_get_height = try loadSymbol("btck_block_tree_entry_get_height")
         btck_block_tree_entry_get_block_hash = try loadSymbol("btck_block_tree_entry_get_block_hash")
+        btck_block_header_create = try loadSymbol("btck_block_header_create")
+        btck_block_header_get_hash = try loadSymbol("btck_block_header_get_hash")
+        btck_block_header_get_prev_hash = try loadSymbol("btck_block_header_get_prev_hash")
+        btck_block_header_get_timestamp = try loadSymbol("btck_block_header_get_timestamp")
+        btck_block_header_get_bits = try loadSymbol("btck_block_header_get_bits")
+        btck_block_header_get_version = try loadSymbol("btck_block_header_get_version")
+        btck_block_header_get_nonce = try loadSymbol("btck_block_header_get_nonce")
+        btck_block_header_destroy = try loadSymbol("btck_block_header_destroy")
         btck_block_hash_to_bytes = try loadSymbol("btck_block_hash_to_bytes")
+        btck_block_hash_destroy = try loadSymbol("btck_block_hash_destroy")
         btck_block_create = try loadSymbol("btck_block_create")
         btck_block_destroy = try loadSymbol("btck_block_destroy")
         btck_chainstate_manager_process_block = try loadSymbol("btck_chainstate_manager_process_block")
