@@ -78,6 +78,7 @@ final class NodeViewModel {
             }
 
             if let syncTask {
+                syncEngine.interrupt()
                 syncTask.cancel()
                 await syncTask.value
                 self.syncTask = nil
@@ -133,8 +134,46 @@ final class NodeViewModel {
 }
 
 struct NodeSyncEngine {
+    private final class KernelRunState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var kernel: BitcoinKernel?
+
+        func install(_ kernel: BitcoinKernel) {
+            lock.lock()
+            self.kernel = kernel
+            lock.unlock()
+        }
+
+        func clear(_ kernel: BitcoinKernel) {
+            lock.lock()
+            defer { lock.unlock() }
+
+            if self.kernel === kernel {
+                self.kernel = nil
+            }
+        }
+
+        func interrupt() {
+            lock.lock()
+            let kernel = self.kernel
+            lock.unlock()
+
+            guard let kernel else {
+                return
+            }
+
+            do {
+                try kernel.interrupt()
+            } catch {
+                Logger(subsystem: "nl.sprovoost.Node", category: "NodeSyncEngine")
+                    .error("Kernel interrupt failed: \(String(describing: error), privacy: .public)")
+            }
+        }
+    }
+
     private let client: MempoolClient
     private let storageRoot: URL
+    private let runState = KernelRunState()
 
     nonisolated init(
         client: MempoolClient = MempoolClient(),
@@ -153,6 +192,9 @@ struct NodeSyncEngine {
         }
 
         let kernel = try BitcoinKernel(storageRoot: storageRoot)
+        runState.install(kernel)
+        defer { runState.clear(kernel) }
+
         let remoteHeight = try await client.fetchTipHeight()
         let currentTip = try kernel.currentTip()
 
@@ -210,6 +252,10 @@ struct NodeSyncEngine {
         snapshot.phase = .finished
         snapshot.statusText = "Signet sync complete"
         await update(snapshot)
+    }
+
+    func interrupt() {
+        runState.interrupt()
     }
 
     nonisolated static func defaultStorageRoot() -> URL {

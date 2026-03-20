@@ -72,6 +72,7 @@ enum BitcoinKernelError: LocalizedError {
     case bestEntryUnavailable
     case blockEntryUnavailable(Int)
     case blockHashUnavailable
+    case contextInterruptFailed(Int32)
 
     var errorDescription: String? {
         switch self {
@@ -145,6 +146,8 @@ enum BitcoinKernelError: LocalizedError {
             return "No active-chain entry exists at height \(height)."
         case .blockHashUnavailable:
             return "Failed to read block hash from kernel state."
+        case .contextInterruptFailed(let code):
+            return "Kernel context interrupt failed with code \(code)."
         }
     }
 }
@@ -392,6 +395,13 @@ final class BitcoinKernel {
         }
 
         return ChainTip(height: height, hash: bestHash)
+    }
+
+    func interrupt() throws {
+        let result = library.btck_context_interrupt(context)
+        guard result == 0 else {
+            throw BitcoinKernelError.contextInterruptFailed(result)
+        }
     }
 
     func blockHeader(from rawBlock: Data, expectedHash: String? = nil) throws -> BlockHeader {
@@ -788,6 +798,7 @@ private final class LoadedBitcoinKernel {
     let btck_context_options_set_chainparams: @convention(c) (OpaquePointer?, OpaquePointer?) -> Void
     let btck_context_options_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_context_create: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_context_interrupt: @convention(c) (OpaquePointer?) -> Int32
     let btck_context_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_chainstate_manager_options_create: @convention(c) (OpaquePointer?, UnsafePointer<CChar>?, Int, UnsafePointer<CChar>?, Int) -> OpaquePointer?
     let btck_chainstate_manager_options_set_worker_threads_num: @convention(c) (OpaquePointer?, Int32) -> Void
@@ -895,6 +906,7 @@ private final class LoadedBitcoinKernel {
         btck_context_options_set_chainparams = try loadSymbol("btck_context_options_set_chainparams")
         btck_context_options_destroy = try loadSymbol("btck_context_options_destroy")
         btck_context_create = try loadSymbol("btck_context_create")
+        btck_context_interrupt = try loadSymbol("btck_context_interrupt")
         btck_context_destroy = try loadSymbol("btck_context_destroy")
         btck_chainstate_manager_options_create = try loadSymbol("btck_chainstate_manager_options_create")
         btck_chainstate_manager_options_set_worker_threads_num = try loadSymbol("btck_chainstate_manager_options_set_worker_threads_num")
