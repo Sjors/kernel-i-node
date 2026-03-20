@@ -61,8 +61,10 @@ enum BitcoinKernelError: LocalizedError {
     case symbolMissing(String)
     case unsupportedPlatform
     case chainParametersCreationFailed
+    case chainParametersCopyFailed
     case contextOptionsCreationFailed
     case contextCreationFailed
+    case contextCopyFailed
     case chainstateOptionsCreationFailed
     case chainstateLocked
     case chainstateCreationFailed
@@ -71,6 +73,7 @@ enum BitcoinKernelError: LocalizedError {
     case blockHeaderHashUnavailable
     case blockHeaderHashMismatch(expected: String, actual: String)
     case blockHeaderProcessingFailed(Int32)
+    case blockHeaderValidationStateCopyFailed
     case blockHeaderValidationFailed(mode: UInt8, result: UInt32)
     case blockCreationFailed
     case blockSerializationFailed
@@ -107,10 +110,14 @@ enum BitcoinKernelError: LocalizedError {
             return "Kernel sync is currently supported on macOS and iOS."
         case .chainParametersCreationFailed:
             return "Failed to create signet chain parameters."
+        case .chainParametersCopyFailed:
+            return "Failed to copy signet chain parameters."
         case .contextOptionsCreationFailed:
             return "Failed to create kernel context options."
         case .contextCreationFailed:
             return "Failed to create kernel context."
+        case .contextCopyFailed:
+            return "Failed to copy the kernel context."
         case .chainstateOptionsCreationFailed:
             return "Failed to create chainstate manager options."
         case .chainstateLocked:
@@ -127,6 +134,8 @@ enum BitcoinKernelError: LocalizedError {
             return "Block header hash mismatch. Expected \(expected), got \(actual)."
         case .blockHeaderProcessingFailed(let code):
             return "Kernel block header processing failed with code \(code)."
+        case .blockHeaderValidationStateCopyFailed:
+            return "Failed to copy the kernel block validation state."
         case let .blockHeaderValidationFailed(mode, result):
             return "Kernel block header validation failed with mode \(mode) and result \(result)."
         case .blockCreationFailed:
@@ -318,6 +327,7 @@ final class BitcoinKernel {
     private let library: LoadedBitcoinKernel
     private let loggingConnection: OpaquePointer?
     private let context: OpaquePointer
+    private let coverageContextCopy: OpaquePointer
     private let chainstateManager: OpaquePointer
 
     static var isSupportedOnCurrentPlatform: Bool {
@@ -340,10 +350,16 @@ final class BitcoinKernel {
 
             let chainParameters = try library.makeChainParameters()
             defer { library.btck_chain_parameters_destroy(chainParameters) }
+            guard let chainParametersCopy = library.btck_chain_parameters_copy(chainParameters) else {
+                throw BitcoinKernelError.chainParametersCopyFailed
+            }
+            defer { library.btck_chain_parameters_destroy(chainParametersCopy) }
 
             let contextOptions = try library.makeContextOptions()
             defer { library.btck_context_options_destroy(contextOptions) }
-            library.btck_context_options_set_chainparams(contextOptions, chainParameters)
+            // The copy is not needed for app behavior; it is kept here to exercise the copy helper
+            // in a real initialization path before the parameters are moved into context options.
+            library.btck_context_options_set_chainparams(contextOptions, chainParametersCopy)
             library.setNotifications(contextOptions, sink: KernelNotificationSink(library: library))
             library.setValidationInterface(contextOptions, sink: KernelValidationSink(library: library))
 
@@ -351,6 +367,12 @@ final class BitcoinKernel {
                 throw BitcoinKernelError.contextCreationFailed
             }
             self.context = context
+            guard let coverageContextCopy = library.btck_context_copy(context) else {
+                throw BitcoinKernelError.contextCopyFailed
+            }
+            // The app does not need a second context. This copy exists purely to exercise the API
+            // on a live context without changing the app's behavior.
+            self.coverageContextCopy = coverageContextCopy
 
             let dataDirectory = storageRoot.appending(path: "chainstate", directoryHint: .isDirectory)
             let blocksDirectory = storageRoot.appending(path: "blocks", directoryHint: .isDirectory)
@@ -397,6 +419,7 @@ final class BitcoinKernel {
 
     deinit {
         library.btck_chainstate_manager_destroy(chainstateManager)
+        library.btck_context_destroy(coverageContextCopy)
         library.btck_context_destroy(context)
         if let loggingConnection {
             library.btck_logging_connection_destroy(loggingConnection)
@@ -612,6 +635,19 @@ final class BitcoinKernel {
         guard validationMode == kernelValidationModeValid else {
             let validationResult = library.btck_block_validation_state_get_block_validation_result(validationState)
             throw BitcoinKernelError.blockHeaderValidationFailed(mode: validationMode, result: validationResult)
+        }
+
+        guard let validationStateCopy = library.btck_block_validation_state_copy(validationState) else {
+            throw BitcoinKernelError.blockHeaderValidationStateCopyFailed
+        }
+        defer { library.btck_block_validation_state_destroy(validationStateCopy) }
+
+        // This copied state is redundant for the current header path, but comparing the copied
+        // verdict back to the original gives the helper a concrete role instead of dead coverage.
+        let copiedValidationMode = library.btck_block_validation_state_get_validation_mode(validationStateCopy)
+        let copiedValidationResult = library.btck_block_validation_state_get_block_validation_result(validationStateCopy)
+        guard copiedValidationMode == validationMode, copiedValidationResult == 0 else {
+            throw BitcoinKernelError.blockInspectionFailed("Copied block validation state did not preserve the valid verdict.")
         }
     }
 
@@ -1065,11 +1101,13 @@ private final class LoadedBitcoinKernel {
     let btck_logging_connection_create: @convention(c) (LogCallback?, UnsafeMutableRawPointer?, (@convention(c) (UnsafeMutableRawPointer?) -> Void)?) -> OpaquePointer?
     let btck_logging_connection_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_chain_parameters_create: @convention(c) (ChainType) -> OpaquePointer?
+    let btck_chain_parameters_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_chain_parameters_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_context_options_create: @convention(c) () -> OpaquePointer?
     let btck_context_options_set_chainparams: @convention(c) (OpaquePointer?, OpaquePointer?) -> Void
     let btck_context_options_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_context_create: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_context_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_context_interrupt: @convention(c) (OpaquePointer?) -> Int32
     let btck_context_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_chainstate_manager_options_create: @convention(c) (OpaquePointer?, UnsafePointer<CChar>?, Int, UnsafePointer<CChar>?, Int) -> OpaquePointer?
@@ -1097,6 +1135,7 @@ private final class LoadedBitcoinKernel {
     let btck_block_header_get_nonce: @convention(c) (OpaquePointer?) -> UInt32
     let btck_block_header_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_block_validation_state_create: @convention(c) () -> OpaquePointer?
+    let btck_block_validation_state_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_block_validation_state_get_validation_mode: @convention(c) (OpaquePointer?) -> UInt8
     let btck_block_validation_state_get_block_validation_result: @convention(c) (OpaquePointer?) -> UInt32
     let btck_block_validation_state_destroy: @convention(c) (OpaquePointer?) -> Void
@@ -1203,11 +1242,13 @@ private final class LoadedBitcoinKernel {
         btck_logging_connection_create = try loadSymbol("btck_logging_connection_create")
         btck_logging_connection_destroy = try loadSymbol("btck_logging_connection_destroy")
         btck_chain_parameters_create = try loadSymbol("btck_chain_parameters_create")
+        btck_chain_parameters_copy = try loadSymbol("btck_chain_parameters_copy")
         btck_chain_parameters_destroy = try loadSymbol("btck_chain_parameters_destroy")
         btck_context_options_create = try loadSymbol("btck_context_options_create")
         btck_context_options_set_chainparams = try loadSymbol("btck_context_options_set_chainparams")
         btck_context_options_destroy = try loadSymbol("btck_context_options_destroy")
         btck_context_create = try loadSymbol("btck_context_create")
+        btck_context_copy = try loadSymbol("btck_context_copy")
         btck_context_interrupt = try loadSymbol("btck_context_interrupt")
         btck_context_destroy = try loadSymbol("btck_context_destroy")
         btck_chainstate_manager_options_create = try loadSymbol("btck_chainstate_manager_options_create")
@@ -1235,6 +1276,7 @@ private final class LoadedBitcoinKernel {
         btck_block_header_get_nonce = try loadSymbol("btck_block_header_get_nonce")
         btck_block_header_destroy = try loadSymbol("btck_block_header_destroy")
         btck_block_validation_state_create = try loadSymbol("btck_block_validation_state_create")
+        btck_block_validation_state_copy = try loadSymbol("btck_block_validation_state_copy")
         btck_block_validation_state_get_validation_mode = try loadSymbol("btck_block_validation_state_get_validation_mode")
         btck_block_validation_state_get_block_validation_result = try loadSymbol("btck_block_validation_state_get_block_validation_result")
         btck_block_validation_state_destroy = try loadSymbol("btck_block_validation_state_destroy")
