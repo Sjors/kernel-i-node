@@ -160,6 +160,7 @@ step="configuring Bitcoin Core kernel build"
   -DBUILD_KERNEL_TEST=OFF \
   -DENABLE_IPC=OFF \
   -DENABLE_WALLET=OFF \
+  -DREDUCE_EXPORTS=ON \
   -DWITH_ZMQ=OFF \
   -DBUILD_BENCH=OFF \
   "-DWITH_CCACHE=${with_ccache}"
