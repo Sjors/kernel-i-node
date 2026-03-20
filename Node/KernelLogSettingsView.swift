@@ -25,6 +25,14 @@ struct KernelLogSettingsView: View {
                     KernelLogCategoryToggleRow(category: category, loggingEnabled: loggingEnabled)
                 }
             }
+
+            Section("Log Format") {
+                KernelLogFormatToggleRow(title: "Timestamps", key: KernelLogSettings.logTimestampsKey, loggingEnabled: loggingEnabled)
+                KernelLogFormatToggleRow(title: "Microsecond Precision", key: KernelLogSettings.logTimeMicrosKey, loggingEnabled: loggingEnabled)
+                KernelLogFormatToggleRow(title: "Thread Names", key: KernelLogSettings.logThreadNamesKey, loggingEnabled: loggingEnabled)
+                KernelLogFormatToggleRow(title: "Source Locations", key: KernelLogSettings.logSourceLocationsKey, loggingEnabled: loggingEnabled)
+                KernelLogFormatToggleRow(title: "Category & Level", key: KernelLogSettings.alwaysPrintCategoryLevelsKey, loggingEnabled: loggingEnabled)
+            }
         }
         #if os(macOS)
         .formStyle(.grouped)
@@ -47,6 +55,28 @@ private struct KernelLogCategoryToggleRow: View {
 
     var body: some View {
         Toggle(category.title, isOn: $isEnabled)
+            .disabled(!loggingEnabled)
+            .onChange(of: isEnabled) { _, _ in
+                KernelLogSettings.notifyChanged()
+            }
+    }
+}
+
+private struct KernelLogFormatToggleRow: View {
+    let title: String
+    let key: String
+    let loggingEnabled: Bool
+    @AppStorage private var isEnabled: Bool
+
+    init(title: String, key: String, loggingEnabled: Bool) {
+        self.title = title
+        self.key = key
+        self.loggingEnabled = loggingEnabled
+        _isEnabled = AppStorage(wrappedValue: false, key)
+    }
+
+    var body: some View {
+        Toggle(title, isOn: $isEnabled)
             .disabled(!loggingEnabled)
             .onChange(of: isEnabled) { _, _ in
                 KernelLogSettings.notifyChanged()

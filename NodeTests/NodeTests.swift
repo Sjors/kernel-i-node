@@ -164,5 +164,11 @@ struct NodeTests {
         for category in KernelLogSettings.categories {
             #expect(defaultsByKey[category.preferenceKey] == false)
         }
+
+        #expect(defaultsByKey[KernelLogSettings.logTimestampsKey] == false)
+        #expect(defaultsByKey[KernelLogSettings.logTimeMicrosKey] == false)
+        #expect(defaultsByKey[KernelLogSettings.logThreadNamesKey] == false)
+        #expect(defaultsByKey[KernelLogSettings.logSourceLocationsKey] == false)
+        #expect(defaultsByKey[KernelLogSettings.alwaysPrintCategoryLevelsKey] == false)
     }
 }

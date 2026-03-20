@@ -11,6 +11,11 @@ struct KernelLogSettingsSnapshot: Equatable, Sendable {
     let isEnabled: Bool
     let internalLogsEnabled: Bool
     let enabledCategories: [UInt8]
+    let logTimestamps: Bool
+    let logTimeMicros: Bool
+    let logThreadNames: Bool
+    let logSourceLocations: Bool
+    let alwaysPrintCategoryLevels: Bool
 }
 
 enum KernelLogSettings {
@@ -18,6 +23,11 @@ enum KernelLogSettings {
     static let internalLogsEnabledKey = "kernel_internal_logs_enabled"
     static let kernelLogCategoryValidation: UInt8 = 9
     static let kernelLogCategoryKernel: UInt8 = 10
+    static let logTimestampsKey = "kernel_log_format_timestamps"
+    static let logTimeMicrosKey = "kernel_log_format_time_micros"
+    static let logThreadNamesKey = "kernel_log_format_threadnames"
+    static let logSourceLocationsKey = "kernel_log_format_sourcelocations"
+    static let alwaysPrintCategoryLevelsKey = "kernel_log_format_category_levels"
     static let didChangeNotification = Notification.Name("KernelLogSettingsDidChange")
 
     static let categories: [KernelLogCategorySetting] = [
@@ -41,7 +51,11 @@ enum KernelLogSettings {
         let isEnabled = defaults.object(forKey: loggingEnabledKey) as? Bool ?? true
         let internalLogsEnabled = defaults.object(forKey: internalLogsEnabledKey) as? Bool ?? true
         guard isEnabled else {
-            return KernelLogSettingsSnapshot(isEnabled: false, internalLogsEnabled: false, enabledCategories: [])
+            return KernelLogSettingsSnapshot(
+                isEnabled: false, internalLogsEnabled: false, enabledCategories: [],
+                logTimestamps: false, logTimeMicros: false, logThreadNames: false,
+                logSourceLocations: false, alwaysPrintCategoryLevels: false
+            )
         }
 
         let enabledCategories = categories.compactMap { category in
@@ -52,7 +66,12 @@ enum KernelLogSettings {
         return KernelLogSettingsSnapshot(
             isEnabled: true,
             internalLogsEnabled: internalLogsEnabled,
-            enabledCategories: enabledCategories
+            enabledCategories: enabledCategories,
+            logTimestamps: defaults.bool(forKey: logTimestampsKey),
+            logTimeMicros: defaults.bool(forKey: logTimeMicrosKey),
+            logThreadNames: defaults.bool(forKey: logThreadNamesKey),
+            logSourceLocations: defaults.bool(forKey: logSourceLocationsKey),
+            alwaysPrintCategoryLevels: defaults.bool(forKey: alwaysPrintCategoryLevelsKey)
         )
     }
 
@@ -99,6 +118,12 @@ enum KernelLogSettings {
         for category in categories {
             values[category.preferenceKey] = false
         }
+
+        values[logTimestampsKey] = false
+        values[logTimeMicrosKey] = false
+        values[logThreadNamesKey] = false
+        values[logSourceLocationsKey] = false
+        values[alwaysPrintCategoryLevelsKey] = false
 
         return values
     }

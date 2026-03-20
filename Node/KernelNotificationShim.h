@@ -53,4 +53,17 @@ void btck_call_context_options_set_validation_interface(
     btck_ValidationInterfaceCallbacks validation_interface
 );
 
+typedef struct {
+    int log_timestamps;
+    int log_time_micros;
+    int log_threadnames;
+    int log_sourcelocations;
+    int always_print_category_levels;
+} btck_LoggingOptions;
+
+void btck_call_logging_set_options(
+    void* function,
+    btck_LoggingOptions options
+);
+
 #endif

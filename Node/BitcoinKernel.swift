@@ -1115,6 +1115,7 @@ private final class LoadedBitcoinKernel {
 
     let btck_context_options_set_notifications_raw: UnsafeMutableRawPointer
     let btck_context_options_set_validation_interface_raw: UnsafeMutableRawPointer
+    let btck_logging_set_options_raw: UnsafeMutableRawPointer
     let btck_logging_set_level_category: @convention(c) (LogCategory, LogLevel) -> Void
     let btck_logging_enable_category: @convention(c) (LogCategory) -> Void
     let btck_logging_disable_category: @convention(c) (LogCategory) -> Void
@@ -1258,6 +1259,7 @@ private final class LoadedBitcoinKernel {
         self.handle = handle
         btck_context_options_set_notifications_raw = try loadRawSymbol("btck_context_options_set_notifications")
         btck_context_options_set_validation_interface_raw = try loadRawSymbol("btck_context_options_set_validation_interface")
+        btck_logging_set_options_raw = try loadRawSymbol("btck_logging_set_options")
         btck_logging_set_level_category = try loadSymbol("btck_logging_set_level_category")
         btck_logging_enable_category = try loadSymbol("btck_logging_enable_category")
         btck_logging_disable_category = try loadSymbol("btck_logging_disable_category")
@@ -1387,6 +1389,16 @@ private final class LoadedBitcoinKernel {
     }
 
     func applyLoggingPreferences(_ settings: KernelLogSettingsSnapshot) {
+        btck_call_logging_set_options(
+            btck_logging_set_options_raw,
+            btck_LoggingOptions(
+                log_timestamps: settings.logTimestamps ? 1 : 0,
+                log_time_micros: settings.logTimeMicros ? 1 : 0,
+                log_threadnames: settings.logThreadNames ? 1 : 0,
+                log_sourcelocations: settings.logSourceLocations ? 1 : 0,
+                always_print_category_levels: settings.alwaysPrintCategoryLevels ? 1 : 0
+            )
+        )
         btck_logging_set_level_category(kernelLogCategoryAll, kernelLogLevelInfo)
         btck_logging_disable_category(kernelLogCategoryAll)
 
