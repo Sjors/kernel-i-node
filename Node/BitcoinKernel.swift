@@ -344,7 +344,7 @@ final class BitcoinKernel {
         #endif
     }
 
-    init(storageRoot: URL, reindexMode: ReindexMode? = nil, blockTipHandler: (@Sendable (ChainTip) -> Void)? = nil) throws {
+    init(storageRoot: URL, reindexMode: ReindexMode? = nil, inMemory: Bool = false, blockTipHandler: (@Sendable (ChainTip) -> Void)? = nil) throws {
         do {
             let library = try LoadedBitcoinKernel()
             self.library = library
@@ -406,6 +406,10 @@ final class BitcoinKernel {
             defer { library.btck_chainstate_manager_options_destroy(chainstateOptions) }
 
             library.btck_chainstate_manager_options_set_worker_threads_num(chainstateOptions, 1)
+            if inMemory {
+                library.btck_chainstate_manager_options_update_block_tree_db_in_memory(chainstateOptions, 1)
+                library.btck_chainstate_manager_options_update_chainstate_db_in_memory(chainstateOptions, 1)
+            }
             if let reindexMode {
                 let wipeBlockTreeDb: Int32 = reindexMode == .full ? 1 : 0
                 let result = library.btck_chainstate_manager_options_set_wipe_dbs(chainstateOptions, wipeBlockTreeDb, 1)
@@ -1134,6 +1138,8 @@ private final class LoadedBitcoinKernel {
     let btck_chainstate_manager_options_create: @convention(c) (OpaquePointer?, UnsafePointer<CChar>?, Int, UnsafePointer<CChar>?, Int) -> OpaquePointer?
     let btck_chainstate_manager_options_set_worker_threads_num: @convention(c) (OpaquePointer?, Int32) -> Void
     let btck_chainstate_manager_options_set_wipe_dbs: @convention(c) (OpaquePointer?, Int32, Int32) -> Int32
+    let btck_chainstate_manager_options_update_block_tree_db_in_memory: @convention(c) (OpaquePointer?, Int32) -> Void
+    let btck_chainstate_manager_options_update_chainstate_db_in_memory: @convention(c) (OpaquePointer?, Int32) -> Void
     let btck_chainstate_manager_options_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_chainstate_manager_create: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_chainstate_manager_destroy: @convention(c) (OpaquePointer?) -> Void
@@ -1278,6 +1284,8 @@ private final class LoadedBitcoinKernel {
         btck_chainstate_manager_options_create = try loadSymbol("btck_chainstate_manager_options_create")
         btck_chainstate_manager_options_set_worker_threads_num = try loadSymbol("btck_chainstate_manager_options_set_worker_threads_num")
         btck_chainstate_manager_options_set_wipe_dbs = try loadSymbol("btck_chainstate_manager_options_set_wipe_dbs")
+        btck_chainstate_manager_options_update_block_tree_db_in_memory = try loadSymbol("btck_chainstate_manager_options_update_block_tree_db_in_memory")
+        btck_chainstate_manager_options_update_chainstate_db_in_memory = try loadSymbol("btck_chainstate_manager_options_update_chainstate_db_in_memory")
         btck_chainstate_manager_options_destroy = try loadSymbol("btck_chainstate_manager_options_destroy")
         btck_chainstate_manager_create = try loadSymbol("btck_chainstate_manager_create")
         btck_chainstate_manager_destroy = try loadSymbol("btck_chainstate_manager_destroy")

@@ -171,4 +171,12 @@ struct NodeTests {
         #expect(defaultsByKey[KernelLogSettings.logSourceLocationsKey] == false)
         #expect(defaultsByKey[KernelLogSettings.alwaysPrintCategoryLevelsKey] == false)
     }
+
+    @Test func inMemoryKernelStartsAtGenesisBlock() async throws {
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let kernel = try BitcoinKernel(storageRoot: tmp, inMemory: true)
+        let tip = try kernel.currentTip()
+        #expect(tip.height == 0)
+    }
 }
