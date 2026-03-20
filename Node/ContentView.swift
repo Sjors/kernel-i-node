@@ -38,8 +38,16 @@ struct ContentView: View {
                 Text("Network")
             }
 
-            ProgressView(value: viewModel.snapshot.progressFraction)
-                .progressViewStyle(.linear)
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.secondary.opacity(0.2))
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.accentColor)
+                        .frame(width: geometry.size.width * viewModel.snapshot.progressFraction)
+                }
+            }
+            .frame(height: 6)
 
             LabeledContent("Progress", value: progressLabel)
             LabeledContent("Height", value: "\(viewModel.snapshot.localHeight) / \(viewModel.snapshot.remoteHeight)")

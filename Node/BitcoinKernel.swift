@@ -344,7 +344,7 @@ final class BitcoinKernel {
         #endif
     }
 
-    init(storageRoot: URL, reindexMode: ReindexMode? = nil) throws {
+    init(storageRoot: URL, reindexMode: ReindexMode? = nil, blockTipHandler: (@Sendable (ChainTip) -> Void)? = nil) throws {
         do {
             let library = try LoadedBitcoinKernel()
             self.library = library
@@ -366,7 +366,7 @@ final class BitcoinKernel {
             // The copy is not needed for app behavior; it is kept here to exercise the copy helper
             // in a real initialization path before the parameters are moved into context options.
             library.btck_context_options_set_chainparams(contextOptions, chainParametersCopy)
-            library.setNotifications(contextOptions, sink: KernelNotificationSink(library: library))
+            library.setNotifications(contextOptions, sink: KernelNotificationSink(library: library, blockTipHandler: blockTipHandler))
             library.setValidationInterface(contextOptions, sink: KernelValidationSink(library: library))
 
             guard let context = library.btck_context_create(contextOptions) else {
@@ -1485,9 +1485,11 @@ private final class LoadedBitcoinKernel {
 
 private final class KernelNotificationSink {
     private let library: LoadedBitcoinKernel
+    let blockTipHandler: (@Sendable (ChainTip) -> Void)?
 
-    init(library: LoadedBitcoinKernel) {
+    init(library: LoadedBitcoinKernel, blockTipHandler: (@Sendable (ChainTip) -> Void)? = nil) {
         self.library = library
+        self.blockTipHandler = blockTipHandler
     }
 
     func observeBlockTip(state: UInt8, entry: UnsafeRawPointer?, verificationProgress: Double) {
@@ -1496,12 +1498,9 @@ private final class KernelNotificationSink {
         }
 
         let opaqueEntry = OpaquePointer(entry)
-        // Keep this notification path exercised, but silence it because the kernel's UpdateTip
-        // log line already provides a better user-visible tip update message.
-        _ = library.btck_block_tree_entry_get_height(opaqueEntry)
-        _ = library.btck_block_tree_entry_get_block_hash(opaqueEntry).map(library.hexString(for:))
-        _ = state
-        _ = verificationProgress
+        let height = Int(library.btck_block_tree_entry_get_height(opaqueEntry))
+        let hash = library.btck_block_tree_entry_get_block_hash(opaqueEntry).map(library.hexString(for:)) ?? ""
+        blockTipHandler?(ChainTip(height: height, hash: hash))
     }
 
     func observeWarningUnset(warning: UInt8) {

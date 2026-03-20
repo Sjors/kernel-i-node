@@ -121,17 +121,21 @@ final class NodeViewModel {
     func requestReindex(_ mode: ReindexMode) {
         pendingReindexMode = mode
         isSyncEnabled = true
-        snapshot.phase = .preparing
-        snapshot.statusText = mode.restartStatusText
+        snapshot = SyncSnapshot(
+            phase: .preparing,
+            statusText: mode.restartStatusText,
+            remoteHeight: snapshot.remoteHeight
+        )
         Task { await reconcileSyncState() }
     }
 
     private func restartSync() async {
-        guard let syncTask else { return }
-        syncEngine.interrupt()
-        syncTask.cancel()
-        await syncTask.value
-        self.syncTask = nil
+        if let syncTask {
+            syncEngine.interrupt()
+            syncTask.cancel()
+            await syncTask.value
+            self.syncTask = nil
+        }
         await reconcileSyncState()
     }
 
@@ -196,7 +200,9 @@ final class NodeViewModel {
     }
 
     private func apply(snapshot: SyncSnapshot) {
-        self.snapshot = snapshot
+        var merged = snapshot
+        merged.remoteHeight = max(self.snapshot.remoteHeight, snapshot.remoteHeight)
+        self.snapshot = merged
     }
 
     private func applyFailure(_ message: String) {
@@ -276,10 +282,7 @@ struct NodeSyncEngine {
     func run(reindexMode: ReindexMode? = nil, networkEnabled: Bool = true, update: @escaping @Sendable (SyncSnapshot) async -> Void) async throws {
         var snapshot = SyncSnapshot(
             phase: .preparing,
-            statusText: reindexMode?.openingStatusText ?? "Opening kernel",
-            localHeight: 0,
-            remoteHeight: 0,
-            tipHash: ""
+            statusText: reindexMode?.openingStatusText ?? "Opening kernel"
         )
         await update(snapshot)
 
@@ -287,7 +290,37 @@ struct NodeSyncEngine {
             throw BitcoinKernelError.unsupportedPlatform
         }
 
-        let kernel = try BitcoinKernel(storageRoot: storageRoot, reindexMode: reindexMode)
+        let lastUpdateTime = OSAllocatedUnfairLock(initialState: ContinuousClock.Instant.now - .seconds(1))
+        let blockTipHandler: @Sendable (ChainTip) -> Void = { tip in
+            let now = ContinuousClock.Instant.now
+            let shouldUpdate = lastUpdateTime.withLock { last -> Bool in
+                guard last.duration(to: now) >= .milliseconds(50) else { return false }
+                last = now
+                return true
+            }
+            guard shouldUpdate else { return }
+            Task { @Sendable in
+                let s = SyncSnapshot(
+                    phase: .syncing,
+                    statusText: "Reindexing block \(tip.height)",
+                    localHeight: tip.height,
+                    remoteHeight: 0,
+                    tipHash: tip.hash
+                )
+                await update(s)
+            }
+        }
+        let storageRoot = self.storageRoot
+        let kernel = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<BitcoinKernel, Error>) in
+            DispatchQueue.global().async {
+                do {
+                    let k = try BitcoinKernel(storageRoot: storageRoot, reindexMode: reindexMode, blockTipHandler: blockTipHandler)
+                    continuation.resume(returning: k)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
         runState.install(kernel)
         defer { runState.clear(kernel) }
 
@@ -296,7 +329,7 @@ struct NodeSyncEngine {
         guard networkEnabled else {
             snapshot.localHeight = currentTip.height
             snapshot.tipHash = currentTip.hash
-            snapshot.phase = .finished
+            snapshot.phase = .idle
             snapshot.statusText = "Network disabled"
             await update(snapshot)
             return
