@@ -1494,11 +1494,6 @@ private final class LoadedBitcoinKernel {
             paths.append((bundleFramework as NSString).appendingPathComponent("libbitcoinkernel.dylib"))
         }
 
-        paths.append(contentsOf: [
-            "/opt/homebrew/lib/libbitcoinkernel.dylib",
-            "/usr/local/lib/libbitcoinkernel.dylib"
-        ])
-
         return paths
     }
 }
