@@ -348,11 +348,16 @@ final class BitcoinKernel {
         do {
             let library = try LoadedBitcoinKernel()
             self.library = library
+            #if DISABLE_KERNEL_LOGGING
+            library.disableLoggingOnce()
+            self.loggingConnection = nil
+            #else
             let loggingSettings = Self.runtimeLogSettings.current()
             self.loggingConnection = library.makeLoggingConnection(
                 logCallback: Self.kernelLogCallback,
                 settings: loggingSettings
             )
+            #endif
 
             let chainParameters = try library.makeChainParameters()
             defer { library.btck_chain_parameters_destroy(chainParameters) }
@@ -535,11 +540,15 @@ final class BitcoinKernel {
     }
 
     func refreshLoggingSettings() {
+        #if !DISABLE_KERNEL_LOGGING
         library.applyLoggingPreferences(Self.runtimeLogSettings.current())
+        #endif
     }
 
     static func refreshRuntimeLogSettings() {
+        #if !DISABLE_KERNEL_LOGGING
         runtimeLogSettings.update(KernelLogSettings.snapshot())
+        #endif
     }
 
     static func currentRuntimeLogSettings() -> KernelLogSettingsSnapshot {
@@ -1116,9 +1125,12 @@ private final class LoadedBitcoinKernel {
     typealias WriteBytesCallback = @convention(c) (UnsafeRawPointer?, Int, UnsafeMutableRawPointer?) -> Int32
 
     private let handle: UnsafeMutableRawPointer
+    private static let loggingDisableLock = NSLock()
+    private static var didDisableLogging = false
 
     let btck_context_options_set_notifications_raw: UnsafeMutableRawPointer
     let btck_context_options_set_validation_interface_raw: UnsafeMutableRawPointer
+    let btck_logging_disable_raw: UnsafeMutableRawPointer
     let btck_logging_set_options_raw: UnsafeMutableRawPointer
     let btck_logging_set_level_category: @convention(c) (LogCategory, LogLevel) -> Void
     let btck_logging_enable_category: @convention(c) (LogCategory) -> Void
@@ -1265,6 +1277,7 @@ private final class LoadedBitcoinKernel {
         self.handle = handle
         btck_context_options_set_notifications_raw = try loadRawSymbol("btck_context_options_set_notifications")
         btck_context_options_set_validation_interface_raw = try loadRawSymbol("btck_context_options_set_validation_interface")
+        btck_logging_disable_raw = try loadRawSymbol("btck_logging_disable")
         btck_logging_set_options_raw = try loadRawSymbol("btck_logging_set_options")
         btck_logging_set_level_category = try loadSymbol("btck_logging_set_level_category")
         btck_logging_enable_category = try loadSymbol("btck_logging_enable_category")
@@ -1389,6 +1402,18 @@ private final class LoadedBitcoinKernel {
             throw BitcoinKernelError.chainParametersCreationFailed
         }
         return chainParameters
+    }
+
+    func disableLoggingOnce() {
+        Self.loggingDisableLock.lock()
+        defer { Self.loggingDisableLock.unlock() }
+
+        guard !Self.didDisableLogging else {
+            return
+        }
+
+        btck_call_logging_disable(btck_logging_disable_raw)
+        Self.didDisableLogging = true
     }
 
     func makeLoggingConnection(logCallback: @escaping LogCallback, settings: KernelLogSettingsSnapshot) -> OpaquePointer? {

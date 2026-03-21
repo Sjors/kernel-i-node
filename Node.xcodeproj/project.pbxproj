@@ -115,6 +115,7 @@
 				A285214B2F65BEE200344857 /* Frameworks */,
 				A2B000012F65C00000344857 /* Embed libbitcoinkernel */,
 				A285214C2F65BEE200344857 /* Resources */,
+				A2D000012F66200000344857 /* Configure Settings.bundle */,
 			);
 			buildRules = (
 			);
@@ -264,6 +265,29 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "/bin/bash \"${SRCROOT}/scripts/embed-libbitcoinkernel.sh\"\n";
+		};
+		A2D000012F66200000344857 /* Configure Settings.bundle */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Node/Settings.bundle/Root.plist",
+				"$(SRCROOT)/Node/Settings.bundle/Root.LoggingDisabled.plist",
+				"$(SRCROOT)/scripts/configure-settings-bundle.sh",
+			);
+			name = "Configure Settings.bundle";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Settings.bundle/Root.plist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/sh \"${SRCROOT}/scripts/configure-settings-bundle.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

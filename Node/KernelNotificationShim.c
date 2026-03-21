@@ -33,3 +33,11 @@ void btck_call_logging_set_options(
 ) {
     ((btck_logging_set_options_fn)function)(options);
 }
+
+typedef void (*btck_logging_disable_fn)(void);
+
+void btck_call_logging_disable(
+    void* function
+) {
+    ((btck_logging_disable_fn)function)();
+}

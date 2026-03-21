@@ -46,14 +46,17 @@ struct NodeApp: App {
     @State private var viewModel = NodeViewModel()
 
     init() {
+        #if !DISABLE_KERNEL_LOGGING
         KernelLogSettings.registerDefaults()
         BitcoinKernel.refreshRuntimeLogSettings()
+        #endif
     }
 
     var body: some Scene {
         WindowGroup {
             ContentView(viewModel: viewModel)
                 .onAppear(perform: configurePlatformHooks)
+                #if !DISABLE_KERNEL_LOGGING
                 .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
                     viewModel.refreshKernelLogging()
                 }
@@ -77,8 +80,9 @@ struct NodeApp: App {
                         viewModel.refreshKernelLogging()
                     }
                 }
+                #endif
         }
-        #if os(macOS)
+        #if os(macOS) && !DISABLE_KERNEL_LOGGING
         Settings {
             KernelLogSettingsView()
         }

@@ -66,4 +66,8 @@ void btck_call_logging_set_options(
     btck_LoggingOptions options
 );
 
+void btck_call_logging_disable(
+    void* function
+);
+
 #endif

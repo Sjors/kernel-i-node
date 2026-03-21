@@ -39,3 +39,13 @@ jobs:
             -destination 'platform=macOS' \
             -only-testing:NodeTests \
             -derivedDataPath "$RUNNER_TEMP/DerivedData"
+
+      - name: Build and run unit tests (logging disabled)
+        run: |
+          xcodebuild test \
+            -project Node.xcodeproj \
+            -scheme Node \
+            -destination 'platform=macOS' \
+            -only-testing:NodeTests \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData-NoLogging" \
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS='DISABLE_KERNEL_LOGGING'

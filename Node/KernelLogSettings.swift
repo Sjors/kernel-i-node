@@ -19,6 +19,12 @@ struct KernelLogSettingsSnapshot: Equatable, Sendable {
 }
 
 enum KernelLogSettings {
+    #if DISABLE_KERNEL_LOGGING
+    static let isLoggingAvailable = false
+    #else
+    static let isLoggingAvailable = true
+    #endif
+
     static let loggingEnabledKey = "kernel_logging_enabled"
     static let internalLogsEnabledKey = "kernel_internal_logs_enabled"
     static let kernelLogCategoryValidation: UInt8 = 9
@@ -44,10 +50,21 @@ enum KernelLogSettings {
     ]
 
     static func registerDefaults(_ defaults: UserDefaults = .standard) {
+        #if DISABLE_KERNEL_LOGGING
+        return
+        #else
         defaults.register(defaults: defaultValues)
+        #endif
     }
 
     static func snapshot(_ defaults: UserDefaults = .standard) -> KernelLogSettingsSnapshot {
+        #if DISABLE_KERNEL_LOGGING
+        return KernelLogSettingsSnapshot(
+            isEnabled: false, internalLogsEnabled: false, enabledCategories: [],
+            logTimestamps: false, logTimeMicros: false, logThreadNames: false,
+            logSourceLocations: false, alwaysPrintCategoryLevels: false
+        )
+        #else
         let isEnabled = defaults.object(forKey: loggingEnabledKey) as? Bool ?? true
         let internalLogsEnabled = defaults.object(forKey: internalLogsEnabledKey) as? Bool ?? true
         guard isEnabled else {
@@ -73,6 +90,7 @@ enum KernelLogSettings {
             logSourceLocations: defaults.bool(forKey: logSourceLocationsKey),
             alwaysPrintCategoryLevels: defaults.bool(forKey: alwaysPrintCategoryLevelsKey)
         )
+        #endif
     }
 
     static func isCategoryEnabled(_ category: UInt8, defaults: UserDefaults = .standard) -> Bool {
@@ -106,7 +124,9 @@ enum KernelLogSettings {
     }
 
     static func notifyChanged() {
+        #if !DISABLE_KERNEL_LOGGING
         NotificationCenter.default.post(name: didChangeNotification, object: nil)
+        #endif
     }
 
     private static var defaultValues: [String: Any] {
