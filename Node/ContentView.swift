@@ -7,6 +7,10 @@
 
 import SwiftUI
 
+#if os(iOS)
+import UIKit
+#endif
+
 struct ContentView: View {
     let viewModel: NodeViewModel
     @State private var pendingReindexMode: ReindexMode?
@@ -62,6 +66,8 @@ struct ContentView: View {
                 Button(viewModel.isSyncEnabled ? "Stop" : "Start") {
                     viewModel.toggleSync()
                 }
+
+                settingsButton
 
                 Spacer()
 
@@ -135,6 +141,29 @@ struct ContentView: View {
     private var progressLabel: String {
         let percent = viewModel.snapshot.progressFraction * 100
         return String(format: "%.1f%%", percent)
+    }
+
+    @ViewBuilder
+    private var settingsButton: some View {
+        #if os(macOS)
+        #if !DISABLE_KERNEL_LOGGING
+        SettingsLink {
+            Image(systemName: "gearshape")
+        }
+        .buttonStyle(.plain)
+        .help("Settings")
+        #endif
+        #elseif os(iOS)
+        Button {
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url)
+            }
+        } label: {
+            Image(systemName: "gearshape")
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Settings")
+        #endif
     }
 
     private var tipHashLabel: String {
