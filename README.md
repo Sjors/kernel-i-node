@@ -62,7 +62,16 @@ Because those kernel build artifacts now live under DerivedData, `Product > Clea
 
 If you want to inspect the Xcode build helpers, see [embed-libbitcoinkernel.sh](scripts/embed-libbitcoinkernel.sh) and [build-libbitcoinkernel.sh](scripts/build-libbitcoinkernel.sh).
 
-Local signing settings should go in `Config/Node.local.xcconfig`, which is ignored by git and included from the tracked `Config/Node.xcconfig`. Do not commit your personal `DEVELOPMENT_TEAM` or other machine-specific signing overrides to `Node.xcodeproj/project.pbxproj`.
+Local settings should go in `Config/Node.local.xcconfig`, which is ignored by git and included from the tracked `Config/Node.xcconfig`. Do not commit your personal `DEVELOPMENT_TEAM` or other machine-specific signing overrides to `Node.xcodeproj/project.pbxproj`.
+
+### Local Overrides
+
+Uncomment or add lines in `Config/Node.local.xcconfig` to override build defaults:
+
+| Setting | Effect | Example |
+|---------|--------|---------|
+| `BITCOIN_CORE_BUILD_TYPE` | CMake build type for `libbitcoinkernel`. Defaults to `Debug`; Xcode Release builds always use `Release`. | `BITCOIN_CORE_BUILD_TYPE = Release` |
+| `SWIFT_ACTIVE_COMPILATION_CONDITIONS` | Add `DISABLE_KERNEL_LOGGING` to silence kernel log output. | `SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) DISABLE_KERNEL_LOGGING` |
 
 ## Notes
 

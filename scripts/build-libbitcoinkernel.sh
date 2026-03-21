@@ -138,9 +138,12 @@ echo "note: Building libbitcoinkernel for ${platform}..." >&2
 step="preparing build directories"
 mkdir -p "${build_dir}" "${install_prefix}"
 
+build_type="${BITCOIN_CORE_BUILD_TYPE:-Debug}"
+
 step="configuring Bitcoin Core kernel build"
+echo "note: CMAKE_BUILD_TYPE=${build_type}" >&2
 "${cmake_bin}" -S "${bitcoin_core_dir}" -B "${build_dir}" -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_BUILD_TYPE="${build_type}" \
   -DCMAKE_INSTALL_PREFIX="${install_prefix}" \
   -DCMAKE_MAKE_PROGRAM="${ninja_bin}" \
   "-DCMAKE_C_FLAGS=${probe_warning_flags}" \
