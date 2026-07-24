@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Observation
 import OSLog
@@ -267,16 +268,16 @@ struct NodeSyncEngine {
         }
     }
 
-    private let client: MempoolClient
-    private let storageRoot: URL
+    private let clientOverride: MempoolClient?
+    private let storageRootOverride: URL?
     private let runState = KernelRunState()
 
     nonisolated init(
-        client: MempoolClient = MempoolClient(),
-        storageRoot: URL = NodeSyncEngine.defaultStorageRoot()
+        client: MempoolClient? = nil,
+        storageRoot: URL? = nil
     ) {
-        self.client = client
-        self.storageRoot = storageRoot
+        self.clientOverride = client
+        self.storageRootOverride = storageRoot
     }
 
     func run(reindexMode: ReindexMode? = nil, networkEnabled: Bool = true, update: @escaping @Sendable (SyncSnapshot) async -> Void) async throws {
@@ -289,6 +290,10 @@ struct NodeSyncEngine {
         guard BitcoinKernel.isSupportedOnCurrentPlatform else {
             throw BitcoinKernelError.unsupportedPlatform
         }
+
+        // Settings are resolved per run, so stopping and starting sync picks up changes.
+        let signetSettings = try SignetSettings.snapshot()
+        let client = clientOverride ?? MempoolClient(baseURL: signetSettings.apiBaseURL)
 
         let lastUpdateTime = OSAllocatedUnfairLock(initialState: ContinuousClock.Instant.now - .seconds(1))
         let blockTipHandler: @Sendable (ChainTip) -> Void = { tip in
@@ -310,11 +315,11 @@ struct NodeSyncEngine {
                 await update(s)
             }
         }
-        let storageRoot = self.storageRoot
+        let storageRoot = storageRootOverride ?? Self.storageRoot(for: signetSettings)
         let kernel = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<BitcoinKernel, Error>) in
             DispatchQueue.global().async {
                 do {
-                    let k = try BitcoinKernel(storageRoot: storageRoot, reindexMode: reindexMode, blockTipHandler: blockTipHandler)
+                    let k = try BitcoinKernel(storageRoot: storageRoot, signetChallenge: signetSettings.challenge, reindexMode: reindexMode, blockTipHandler: blockTipHandler)
                     continuation.resume(returning: k)
                 } catch {
                     continuation.resume(throwing: error)
@@ -405,5 +410,19 @@ struct NodeSyncEngine {
         let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(filePath: NSTemporaryDirectory(), directoryHint: .isDirectory)
         return baseURL.appending(path: "Node/kernel-signet", directoryHint: .isDirectory)
+    }
+
+    /// A custom challenge defines a different chain, so it gets its own storage
+    /// directory keyed by a digest of the challenge script.
+    nonisolated static func storageRoot(for settings: SignetSettingsSnapshot) -> URL {
+        guard let challenge = settings.challenge else {
+            return defaultStorageRoot()
+        }
+
+        let digest = SHA256.hash(data: challenge)
+        let suffix = digest.prefix(6).map { String(format: "%02x", $0) }.joined()
+        return defaultStorageRoot()
+            .deletingLastPathComponent()
+            .appending(path: "kernel-signet-\(suffix)", directoryHint: .isDirectory)
     }
 }

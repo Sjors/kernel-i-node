@@ -82,9 +82,16 @@ struct NodeApp: App {
                 }
                 #endif
         }
-        #if os(macOS) && !DISABLE_KERNEL_LOGGING
+        #if os(macOS)
         Settings {
-            KernelLogSettingsView()
+            TabView {
+                SignetSettingsView()
+                    .tabItem { Label("Signet", systemImage: "network") }
+                #if !DISABLE_KERNEL_LOGGING
+                KernelLogSettingsView()
+                    .tabItem { Label("Logging", systemImage: "doc.plaintext") }
+                #endif
+            }
         }
         #endif
     }

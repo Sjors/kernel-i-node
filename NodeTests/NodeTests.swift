@@ -27,6 +27,88 @@ struct NodeTests {
         #expect(path.contains("/Node/kernel-signet"))
     }
 
+    /// The default signet challenge from Bitcoin Core's chainparams.cpp. Passing it through the
+    /// custom-signet path must accept the same chain as the built-in signet parameters.
+    static let defaultSignetChallengeHex =
+        "512103ad5e0edad18cb1f0fc0d28a3d4f1f3e445640337489abb10404f2d1e086be430210359ef5021964fe22d6f8e05b2463c9540ce96883fe3b278760f048f5189f2e6c452ae"
+
+    @Test func signetSettingsDefaultToStandardSignet() async throws {
+        let defaults = try #require(UserDefaults(suiteName: #function))
+        defaults.removePersistentDomain(forName: #function)
+
+        let snapshot = try SignetSettings.snapshot(defaults)
+        #expect(snapshot.challenge == nil)
+        #expect(snapshot.apiBaseURL == SignetSettings.defaultAPIBaseURL)
+    }
+
+    @Test func signetSettingsParseCustomChallengeAndURL() async throws {
+        let defaults = try #require(UserDefaults(suiteName: #function))
+        defaults.removePersistentDomain(forName: #function)
+        defaults.set(" 51 ", forKey: SignetSettings.challengeKey)
+        defaults.set("https://example.com/signet/api", forKey: SignetSettings.apiURLKey)
+
+        let snapshot = try SignetSettings.snapshot(defaults)
+        #expect(snapshot.challenge == Data([0x51]))
+        #expect(snapshot.apiBaseURL == URL(string: "https://example.com/signet/api"))
+    }
+
+    @Test func signetSettingsRejectInvalidChallengeHex() async throws {
+        let defaults = try #require(UserDefaults(suiteName: #function))
+        defaults.removePersistentDomain(forName: #function)
+        defaults.set("zz", forKey: SignetSettings.challengeKey)
+
+        #expect(throws: SignetSettingsError.self) {
+            try SignetSettings.snapshot(defaults)
+        }
+
+        defaults.set("512", forKey: SignetSettings.challengeKey)
+        #expect(throws: SignetSettingsError.self) {
+            try SignetSettings.snapshot(defaults)
+        }
+    }
+
+    @Test func signetSettingsRejectInvalidAPIURL() async throws {
+        let defaults = try #require(UserDefaults(suiteName: #function))
+        defaults.removePersistentDomain(forName: #function)
+        defaults.set("ftp://example.com", forKey: SignetSettings.apiURLKey)
+
+        #expect(throws: SignetSettingsError.self) {
+            try SignetSettings.snapshot(defaults)
+        }
+    }
+
+    @Test func customChallengeUsesDistinctStorageRoot() async throws {
+        let custom = SignetSettingsSnapshot(
+            challenge: SignetSettings.data(fromHex: Self.defaultSignetChallengeHex),
+            apiBaseURL: SignetSettings.defaultAPIBaseURL
+        )
+        let defaultSnapshot = SignetSettingsSnapshot(challenge: nil, apiBaseURL: SignetSettings.defaultAPIBaseURL)
+
+        let customRoot = NodeSyncEngine.storageRoot(for: custom)
+        #expect(customRoot != NodeSyncEngine.defaultStorageRoot())
+        #expect(customRoot.lastPathComponent.hasPrefix("kernel-signet-"))
+        #expect(NodeSyncEngine.storageRoot(for: defaultSnapshot) == NodeSyncEngine.defaultStorageRoot())
+        // Deterministic: the same challenge always maps to the same directory.
+        #expect(NodeSyncEngine.storageRoot(for: custom) == customRoot)
+    }
+
+    @Test func inMemoryKernelWithDefaultChallengeMatchesDefaultSignetGenesis() async throws {
+        let challenge = try #require(SignetSettings.data(fromHex: Self.defaultSignetChallengeHex))
+
+        let defaultTmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: defaultTmp) }
+        let defaultKernel = try BitcoinKernel(storageRoot: defaultTmp, inMemory: true)
+        let defaultTip = try defaultKernel.currentTip()
+
+        let customTmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: customTmp) }
+        let customKernel = try BitcoinKernel(storageRoot: customTmp, signetChallenge: challenge, inMemory: true)
+        let customTip = try customKernel.currentTip()
+
+        #expect(customTip.height == 0)
+        #expect(customTip.hash == defaultTip.hash)
+    }
+
     @Test func chainstateLockedErrorHasHelpfulDescription() async throws {
         #expect(BitcoinKernelError.chainstateLocked.errorDescription == "The chainstate is already in use by another Node instance.")
     }

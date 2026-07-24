@@ -344,7 +344,7 @@ final class BitcoinKernel {
         #endif
     }
 
-    init(storageRoot: URL, reindexMode: ReindexMode? = nil, inMemory: Bool = false, blockTipHandler: (@Sendable (ChainTip) -> Void)? = nil) throws {
+    init(storageRoot: URL, signetChallenge: Data? = nil, reindexMode: ReindexMode? = nil, inMemory: Bool = false, blockTipHandler: (@Sendable (ChainTip) -> Void)? = nil) throws {
         do {
             let library = try LoadedBitcoinKernel()
             self.library = library
@@ -359,7 +359,7 @@ final class BitcoinKernel {
             )
             #endif
 
-            let chainParameters = try library.makeChainParameters()
+            let chainParameters = try library.makeChainParameters(signetChallenge: signetChallenge)
             defer { library.btck_chain_parameters_destroy(chainParameters) }
             guard let chainParametersCopy = library.btck_chain_parameters_copy(chainParameters) else {
                 throw BitcoinKernelError.chainParametersCopyFailed
@@ -1133,6 +1133,7 @@ private final class LoadedBitcoinKernel {
     let btck_logging_connection_create: @convention(c) (LogCallback?, UnsafeMutableRawPointer?, (@convention(c) (UnsafeMutableRawPointer?) -> Void)?) -> OpaquePointer?
     let btck_logging_connection_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_chain_parameters_create: @convention(c) (ChainType) -> OpaquePointer?
+    let btck_chain_parameters_create_signet: @convention(c) (UnsafeRawPointer?, Int) -> OpaquePointer?
     let btck_chain_parameters_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_chain_parameters_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_context_options_create: @convention(c) () -> OpaquePointer?
@@ -1280,6 +1281,7 @@ private final class LoadedBitcoinKernel {
         btck_logging_connection_create = try loadSymbol("btck_logging_connection_create")
         btck_logging_connection_destroy = try loadSymbol("btck_logging_connection_destroy")
         btck_chain_parameters_create = try loadSymbol("btck_chain_parameters_create")
+        btck_chain_parameters_create_signet = try loadSymbol("btck_chain_parameters_create_signet")
         btck_chain_parameters_copy = try loadSymbol("btck_chain_parameters_copy")
         btck_chain_parameters_destroy = try loadSymbol("btck_chain_parameters_destroy")
         btck_context_options_create = try loadSymbol("btck_context_options_create")
@@ -1392,7 +1394,16 @@ private final class LoadedBitcoinKernel {
         dlclose(handle)
     }
 
-    func makeChainParameters() throws -> OpaquePointer {
+    func makeChainParameters(signetChallenge: Data? = nil) throws -> OpaquePointer {
+        if let signetChallenge {
+            return try signetChallenge.withUnsafeBytes { buffer in
+                guard let chainParameters = btck_chain_parameters_create_signet(buffer.baseAddress, buffer.count) else {
+                    throw BitcoinKernelError.chainParametersCreationFailed
+                }
+                return chainParameters
+            }
+        }
+
         guard let chainParameters = btck_chain_parameters_create(3) else {
             throw BitcoinKernelError.chainParametersCreationFailed
         }

@@ -146,13 +146,11 @@ struct ContentView: View {
     @ViewBuilder
     private var settingsButton: some View {
         #if os(macOS)
-        #if !DISABLE_KERNEL_LOGGING
         SettingsLink {
             Image(systemName: "gearshape")
         }
         .buttonStyle(.plain)
         .help("Settings")
-        #endif
         #elseif os(iOS)
         Button {
             if let url = URL(string: UIApplication.openSettingsURLString) {
