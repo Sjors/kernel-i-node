@@ -40,6 +40,15 @@ jobs:
             -only-testing:NodeTests \
             -derivedDataPath "$RUNNER_TEMP/DerivedData"
 
+      - name: Build iPhone Simulator app
+        run: |
+          xcodebuild build \
+            -project Node.xcodeproj \
+            -scheme Node \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData-iOS" \
+            CODE_SIGNING_ALLOWED=NO
+
       - name: Build and run unit tests (logging disabled)
         run: |
           xcodebuild test \
@@ -48,4 +57,14 @@ jobs:
             -destination 'platform=macOS' \
             -only-testing:NodeTests \
             -derivedDataPath "$RUNNER_TEMP/DerivedData-NoLogging" \
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS='DISABLE_KERNEL_LOGGING'
+
+      - name: Build iPhone Simulator app (logging disabled)
+        run: |
+          xcodebuild build \
+            -project Node.xcodeproj \
+            -scheme Node \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData-iOS-NoLogging" \
+            CODE_SIGNING_ALLOWED=NO \
             SWIFT_ACTIVE_COMPILATION_CONDITIONS='DISABLE_KERNEL_LOGGING'

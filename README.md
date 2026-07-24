@@ -73,6 +73,17 @@ Uncomment or add lines in `Config/Node.local.xcconfig` to override build default
 | `BITCOIN_CORE_BUILD_TYPE` | CMake build type for `libbitcoinkernel`. Defaults to `Debug`; Xcode Release builds always use `Release`. | `BITCOIN_CORE_BUILD_TYPE = Release` |
 | `SWIFT_ACTIVE_COMPILATION_CONDITIONS` | Add `DISABLE_KERNEL_LOGGING` to silence kernel log output. | `SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) DISABLE_KERNEL_LOGGING` |
 
+### Before Pushing
+
+Run both the normal and logging-disabled variants before pushing changes:
+
+```sh
+xcodebuild test -project Node.xcodeproj -scheme Node -destination 'platform=macOS' -only-testing:NodeTests
+xcodebuild test -project Node.xcodeproj -scheme Node -destination 'platform=macOS' -only-testing:NodeTests SWIFT_ACTIVE_COMPILATION_CONDITIONS='DISABLE_KERNEL_LOGGING'
+xcodebuild build -project Node.xcodeproj -scheme Node -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO
+xcodebuild build -project Node.xcodeproj -scheme Node -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO SWIFT_ACTIVE_COMPILATION_CONDITIONS='DISABLE_KERNEL_LOGGING'
+```
+
 ## Notes
 
 - This app uses [`mempool.space`](https://mempool.space/signet) as a block source.
