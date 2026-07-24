@@ -92,6 +92,45 @@ struct NodeTests {
         #expect(NodeSyncEngine.storageRoot(for: custom) == customRoot)
     }
 
+    @Test func transactionCheckAcceptsGenesisCoinbaseAndRejectsOutputlessTransaction() async throws {
+        let library = try LoadedBitcoinKernel()
+
+        // The genesis coinbase transaction (shared by all networks, including signet).
+        let genesisCoinbaseHex =
+            "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff4d04ffff001d010445" +
+            "5468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e" +
+            "64206261696c6f757420666f722062616e6b73ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7" +
+            "105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac" +
+            "00000000"
+        let validBytes = try #require(SignetSettings.data(fromHex: genesisCoinbaseHex))
+        let validTransaction = try #require(validBytes.withUnsafeBytes {
+            library.btck_transaction_create($0.baseAddress, $0.count)
+        })
+        defer { library.btck_transaction_destroy(validTransaction) }
+
+        let validState = try #require(library.btck_tx_validation_state_create())
+        defer { library.btck_tx_validation_state_destroy(validState) }
+        #expect(library.btck_transaction_check(validTransaction, validState) == 1)
+        #expect(library.btck_tx_validation_state_get_validation_mode(validState) == 0)
+        #expect(library.btck_tx_validation_state_get_tx_validation_result(validState) == 0)
+
+        // One input, no outputs: parses fine but violates consensus (bad-txns-vout-empty).
+        let outputlessHex =
+            "0200000001" + String(repeating: "0", count: 64) + "00000000" + "00" + "ffffffff" + "00" + "00000000"
+        let invalidBytes = try #require(SignetSettings.data(fromHex: outputlessHex))
+        let invalidTransaction = try #require(invalidBytes.withUnsafeBytes {
+            library.btck_transaction_create($0.baseAddress, $0.count)
+        })
+        defer { library.btck_transaction_destroy(invalidTransaction) }
+
+        let invalidState = try #require(library.btck_tx_validation_state_create())
+        defer { library.btck_tx_validation_state_destroy(invalidState) }
+        #expect(library.btck_transaction_check(invalidTransaction, invalidState) == 0)
+        #expect(library.btck_tx_validation_state_get_validation_mode(invalidState) == 1)
+        // btck_TxValidationResult_CONSENSUS
+        #expect(library.btck_tx_validation_state_get_tx_validation_result(invalidState) == 1)
+    }
+
     @Test func inMemoryKernelWithDefaultChallengeMatchesDefaultSignetGenesis() async throws {
         let challenge = try #require(SignetSettings.data(fromHex: Self.defaultSignetChallengeHex))
 

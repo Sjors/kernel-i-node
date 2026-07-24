@@ -13,6 +13,8 @@ private let kernelWarningLargeWorkInvalidChain: UInt8 = 1
 private let kernelValidationModeValid: UInt8 = 0
 private let kernelValidationModeInvalid: UInt8 = 1
 private let kernelValidationModeInternalError: UInt8 = 2
+private let kernelBlockCheckFlagsAll: UInt32 = (1 << 0) | (1 << 1)
+private let kernelTxValidationResultUnset: UInt32 = 0
 private let kernelScriptVerifyStatusOK: UInt8 = 0
 private let kernelScriptVerificationFlagsAll: UInt32 =
     (1 << 0) |
@@ -80,6 +82,10 @@ enum BitcoinKernelError: LocalizedError {
     case blockCreationFailed
     case blockSerializationFailed
     case blockSerializationMismatch
+    case consensusParametersUnavailable
+    case blockCheckSetupFailed
+    case blockCheckFailed(mode: UInt8, result: UInt32)
+    case secondTransactionCheckFailed(mode: UInt8, result: UInt32)
     case blockProcessingFailed(Int32)
     case secondTransactionSerializationFailed
     case secondTransactionCreationFailed
@@ -150,6 +156,14 @@ enum BitcoinKernelError: LocalizedError {
             return "Failed to serialize the parsed block."
         case .blockSerializationMismatch:
             return "Serialized block bytes did not match the original raw block."
+        case .consensusParametersUnavailable:
+            return "Failed to read consensus parameters from the chain parameters."
+        case .blockCheckSetupFailed:
+            return "Failed to create a validation state for the context-free block check."
+        case let .blockCheckFailed(mode, result):
+            return "Context-free block check failed with mode \(mode) and result \(result)."
+        case let .secondTransactionCheckFailed(mode, result):
+            return "Context-free check of the second transaction failed with mode \(mode) and result \(result)."
         case .blockProcessingFailed(let code):
             return "Kernel block processing failed with code \(code)."
         case .secondTransactionSerializationFailed:
@@ -332,6 +346,7 @@ final class BitcoinKernel {
 
     private let library: LoadedBitcoinKernel
     private let loggingConnection: OpaquePointer?
+    private let chainParameters: OpaquePointer
     private let context: OpaquePointer
     private let coverageContextCopy: OpaquePointer
     private let chainstateManager: OpaquePointer
@@ -359,8 +374,10 @@ final class BitcoinKernel {
             )
             #endif
 
+            // The chain parameters are retained for the kernel's lifetime so consensus
+            // parameters borrowed from them stay valid for context-free block checks.
             let chainParameters = try library.makeChainParameters(signetChallenge: signetChallenge)
-            defer { library.btck_chain_parameters_destroy(chainParameters) }
+            self.chainParameters = chainParameters
             guard let chainParametersCopy = library.btck_chain_parameters_copy(chainParameters) else {
                 throw BitcoinKernelError.chainParametersCopyFailed
             }
@@ -450,6 +467,7 @@ final class BitcoinKernel {
         library.btck_chainstate_manager_destroy(chainstateManager)
         library.btck_context_destroy(coverageContextCopy)
         library.btck_context_destroy(context)
+        library.btck_chain_parameters_destroy(chainParameters)
         if let loggingConnection {
             library.btck_logging_connection_destroy(loggingConnection)
         }
@@ -629,6 +647,10 @@ final class BitcoinKernel {
 
         try inspectParsedBlock(block, against: header, expectedSummary: headerSummary)
 
+        // Context-free consensus checks (including proof of work and merkle root) before
+        // handing the block to the chainstate manager.
+        try checkBlock(block)
+
         let secondTransaction = try extractSecondTransaction(from: block)
         defer {
             if let secondTransaction {
@@ -679,6 +701,42 @@ final class BitcoinKernel {
         }
     }
 
+    private func checkBlock(_ block: OpaquePointer) throws {
+        guard let consensusParams = library.btck_chain_parameters_get_consensus_params(chainParameters) else {
+            throw BitcoinKernelError.consensusParametersUnavailable
+        }
+
+        guard let validationState = library.btck_block_validation_state_create() else {
+            throw BitcoinKernelError.blockCheckSetupFailed
+        }
+        defer { library.btck_block_validation_state_destroy(validationState) }
+
+        guard library.btck_block_check(block, consensusParams, kernelBlockCheckFlagsAll, validationState) == 1 else {
+            let mode = library.btck_block_validation_state_get_validation_mode(validationState)
+            let result = library.btck_block_validation_state_get_block_validation_result(validationState)
+            throw BitcoinKernelError.blockCheckFailed(mode: mode, result: result)
+        }
+    }
+
+    private func checkTransaction(_ transaction: OpaquePointer) throws {
+        guard let validationState = library.btck_tx_validation_state_create() else {
+            throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to create a transaction validation state.")
+        }
+        defer { library.btck_tx_validation_state_destroy(validationState) }
+
+        guard library.btck_transaction_check(transaction, validationState) == 1 else {
+            let mode = library.btck_tx_validation_state_get_validation_mode(validationState)
+            let result = library.btck_tx_validation_state_get_tx_validation_result(validationState)
+            throw BitcoinKernelError.secondTransactionCheckFailed(mode: mode, result: result)
+        }
+
+        // A passing check must leave the state at valid with an unset result.
+        guard library.btck_tx_validation_state_get_validation_mode(validationState) == kernelValidationModeValid,
+              library.btck_tx_validation_state_get_tx_validation_result(validationState) == kernelTxValidationResultUnset else {
+            throw BitcoinKernelError.secondTransactionInspectionFailed("Transaction check passed but left an unexpected validation state.")
+        }
+    }
+
     private func extractSecondTransaction(from block: OpaquePointer) throws -> (transaction: OpaquePointer, txid: String)? {
         let transactionCount = Int(library.btck_block_count_transactions(block))
         guard transactionCount > 1 else {
@@ -713,6 +771,10 @@ final class BitcoinKernel {
             return transaction
         }
         defer { library.btck_transaction_destroy(transaction) }
+
+        // Context-free consensus checks on the recreated transaction before it is used
+        // for post-acceptance script verification.
+        try checkTransaction(transaction)
 
         guard let copiedTransaction = library.btck_transaction_copy(transaction) else {
             throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to copy the recreated second transaction.")
@@ -1112,7 +1174,8 @@ private final class KernelByteCollector {
     var data = Data()
 }
 
-private final class LoadedBitcoinKernel {
+// Internal (not private) so unit tests can exercise kernel functions directly.
+final class LoadedBitcoinKernel {
     typealias ChainType = UInt8
     typealias LogCategory = UInt8
     typealias LogLevel = UInt8
@@ -1134,6 +1197,13 @@ private final class LoadedBitcoinKernel {
     let btck_logging_connection_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_chain_parameters_create: @convention(c) (ChainType) -> OpaquePointer?
     let btck_chain_parameters_create_signet: @convention(c) (UnsafeRawPointer?, Int) -> OpaquePointer?
+    let btck_chain_parameters_get_consensus_params: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_block_check: @convention(c) (OpaquePointer?, OpaquePointer?, UInt32, OpaquePointer?) -> Int32
+    let btck_transaction_check: @convention(c) (OpaquePointer?, OpaquePointer?) -> Int32
+    let btck_tx_validation_state_create: @convention(c) () -> OpaquePointer?
+    let btck_tx_validation_state_get_validation_mode: @convention(c) (OpaquePointer?) -> UInt8
+    let btck_tx_validation_state_get_tx_validation_result: @convention(c) (OpaquePointer?) -> UInt32
+    let btck_tx_validation_state_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_chain_parameters_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_chain_parameters_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_context_options_create: @convention(c) () -> OpaquePointer?
@@ -1282,6 +1352,13 @@ private final class LoadedBitcoinKernel {
         btck_logging_connection_destroy = try loadSymbol("btck_logging_connection_destroy")
         btck_chain_parameters_create = try loadSymbol("btck_chain_parameters_create")
         btck_chain_parameters_create_signet = try loadSymbol("btck_chain_parameters_create_signet")
+        btck_chain_parameters_get_consensus_params = try loadSymbol("btck_chain_parameters_get_consensus_params")
+        btck_block_check = try loadSymbol("btck_block_check")
+        btck_transaction_check = try loadSymbol("btck_transaction_check")
+        btck_tx_validation_state_create = try loadSymbol("btck_tx_validation_state_create")
+        btck_tx_validation_state_get_validation_mode = try loadSymbol("btck_tx_validation_state_get_validation_mode")
+        btck_tx_validation_state_get_tx_validation_result = try loadSymbol("btck_tx_validation_state_get_tx_validation_result")
+        btck_tx_validation_state_destroy = try loadSymbol("btck_tx_validation_state_destroy")
         btck_chain_parameters_copy = try loadSymbol("btck_chain_parameters_copy")
         btck_chain_parameters_destroy = try loadSymbol("btck_chain_parameters_destroy")
         btck_context_options_create = try loadSymbol("btck_context_options_create")
@@ -1452,7 +1529,7 @@ private final class LoadedBitcoinKernel {
         }
     }
 
-    func setNotifications(_ contextOptions: OpaquePointer, sink: KernelNotificationSink) {
+    fileprivate func setNotifications(_ contextOptions: OpaquePointer, sink: KernelNotificationSink) {
         let retainedSink = Unmanaged.passRetained(sink)
         let callbacks = btck_NotificationInterfaceCallbacks(
             user_data: retainedSink.toOpaque(),
@@ -1475,7 +1552,7 @@ private final class LoadedBitcoinKernel {
         )
     }
 
-    func setValidationInterface(_ contextOptions: OpaquePointer, sink: KernelValidationSink) {
+    fileprivate func setValidationInterface(_ contextOptions: OpaquePointer, sink: KernelValidationSink) {
         let retainedSink = Unmanaged.passRetained(sink)
         var callbacks = btck_ValidationInterfaceCallbacks()
         callbacks.user_data = retainedSink.toOpaque()
