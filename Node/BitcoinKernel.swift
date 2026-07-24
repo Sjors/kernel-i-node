@@ -547,6 +547,18 @@ final class BitcoinKernel {
             }
         }
 
+        // Ancestor lookups must agree with the entries already inspected: the tip is its
+        // own ancestor at its own height, and the ancestor at height 0 is the genesis entry.
+        guard let tipAncestor = library.btck_block_tree_entry_get_ancestor(activeChainEntry, Int32(height)),
+              library.btck_block_tree_entry_equals(tipAncestor, activeChainEntry) == 1 else {
+            throw BitcoinKernelError.chainInspectionFailed("The tip ancestor at the tip height did not match the tip entry.")
+        }
+        guard let genesisAncestor = library.btck_block_tree_entry_get_ancestor(activeChainEntry, 0),
+              let genesisEntry = library.btck_chain_get_by_height(activeChain, 0),
+              library.btck_block_tree_entry_equals(genesisAncestor, genesisEntry) == 1 else {
+            throw BitcoinKernelError.chainInspectionFailed("The tip ancestor at height 0 did not match the genesis entry.")
+        }
+
         return ChainTip(height: height, hash: bestHash)
     }
 
@@ -1302,6 +1314,7 @@ final class LoadedBitcoinKernel {
     let btck_chain_get_by_height: @convention(c) (OpaquePointer?, Int32) -> OpaquePointer?
     let btck_chain_contains: @convention(c) (OpaquePointer?, OpaquePointer?) -> Int32
     let btck_block_tree_entry_get_previous: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_block_tree_entry_get_ancestor: @convention(c) (OpaquePointer?, Int32) -> OpaquePointer?
     let btck_block_tree_entry_get_block_header: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_block_tree_entry_get_height: @convention(c) (OpaquePointer?) -> Int32
     let btck_block_tree_entry_get_block_hash: @convention(c) (OpaquePointer?) -> OpaquePointer?
@@ -1465,6 +1478,7 @@ final class LoadedBitcoinKernel {
         btck_chain_get_by_height = try loadSymbol("btck_chain_get_by_height")
         btck_chain_contains = try loadSymbol("btck_chain_contains")
         btck_block_tree_entry_get_previous = try loadSymbol("btck_block_tree_entry_get_previous")
+        btck_block_tree_entry_get_ancestor = try loadSymbol("btck_block_tree_entry_get_ancestor")
         btck_block_tree_entry_get_block_header = try loadSymbol("btck_block_tree_entry_get_block_header")
         btck_block_tree_entry_get_height = try loadSymbol("btck_block_tree_entry_get_height")
         btck_block_tree_entry_get_block_hash = try loadSymbol("btck_block_tree_entry_get_block_hash")
