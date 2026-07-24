@@ -279,9 +279,14 @@ struct NodeTests {
         )
         let specifiers = try #require(plist["PreferenceSpecifiers"] as? [[String: Any]])
 
-        #expect(specifiers.count == 1)
         #expect(specifiers.allSatisfy { ($0["Type"] as? String) != "PSToggleSwitchSpecifier" })
-        #expect(specifiers.first?["FooterText"] as? String == "Kernel logging settings are disabled in this build.")
+        #expect(specifiers.contains { ($0["FooterText"] as? String) == "Kernel logging settings are disabled in this build." })
+
+        // The custom signet text fields remain available in logging-disabled builds.
+        let textFieldKeys = specifiers
+            .filter { ($0["Type"] as? String) == "PSTextFieldSpecifier" }
+            .compactMap { $0["Key"] as? String }
+        #expect(textFieldKeys == [SignetSettings.challengeKey, SignetSettings.apiURLKey])
     }
 
     @Test func inMemoryKernelStartsAtGenesisBlock() async throws {
