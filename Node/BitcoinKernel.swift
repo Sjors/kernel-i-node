@@ -197,6 +197,8 @@ final class BitcoinKernel {
     fileprivate static let logger = Logger(subsystem: "nl.sprovoost.Node", category: "BitcoinKernel")
     private static let serializedBlockHeaderLength = 80
     private static let runtimeLogSettings = RuntimeKernelLogSettings()
+    private static let loggingDisableLock = NSLock()
+    private static var didDisableLogging = false
     fileprivate static let kernelWriteBytesCallback: @convention(c) (UnsafeRawPointer?, Int, UnsafeMutableRawPointer?) -> Int32 = { bytes, size, userData in
         guard let userData else {
             return 1
@@ -331,7 +333,6 @@ final class BitcoinKernel {
         sink.logBlockDisconnected(block: block, entry: entry)
     }
 
-    private let api: BitcoinKernelAPI
     private let loggingConnection: OpaquePointer?
     private let chainParameters: OpaquePointer
     private let context: OpaquePointer
@@ -348,14 +349,12 @@ final class BitcoinKernel {
 
     init(storageRoot: URL, signetChallenge: Data? = nil, reindexMode: ReindexMode? = nil, inMemory: Bool = false, blockTipHandler: (@Sendable (ChainTip) -> Void)? = nil) throws {
         do {
-            let api = BitcoinKernelAPI()
-            self.api = api
             #if DISABLE_KERNEL_LOGGING
-            api.disableLoggingOnce()
+            Self.disableLoggingOnce()
             self.loggingConnection = nil
             #else
             let loggingSettings = Self.runtimeLogSettings.current()
-            self.loggingConnection = api.makeLoggingConnection(
+            self.loggingConnection = Self.makeLoggingConnection(
                 logCallback: Self.kernelLogCallback,
                 settings: loggingSettings
             )
@@ -363,20 +362,23 @@ final class BitcoinKernel {
 
             // The chain parameters are retained for the kernel's lifetime so consensus
             // parameters borrowed from them stay valid for context-free block checks.
-            let chainParameters = try api.makeChainParameters(signetChallenge: signetChallenge)
+            let chainParameters = try Self.makeChainParameters(signetChallenge: signetChallenge)
             self.chainParameters = chainParameters
             guard let chainParametersCopy = btck_chain_parameters_copy(chainParameters) else {
                 throw BitcoinKernelError.chainParametersCopyFailed
             }
             defer { btck_chain_parameters_destroy(chainParametersCopy) }
 
-            let contextOptions = try api.makeContextOptions()
+            let contextOptions = try Self.makeContextOptions()
             defer { btck_context_options_destroy(contextOptions) }
             // The copy is not needed for app behavior; it is kept here to exercise the copy helper
             // in a real initialization path before the parameters are moved into context options.
             btck_context_options_set_chainparams(contextOptions, chainParametersCopy)
-            api.setNotifications(contextOptions, sink: KernelNotificationSink(api: api, blockTipHandler: blockTipHandler))
-            api.setValidationInterface(contextOptions, sink: KernelValidationSink(api: api))
+            Self.setNotifications(
+                contextOptions,
+                sink: KernelNotificationSink(blockTipHandler: blockTipHandler)
+            )
+            Self.setValidationInterface(contextOptions, sink: KernelValidationSink())
 
             guard let context = btck_context_create(contextOptions) else {
                 throw BitcoinKernelError.contextCreationFailed
@@ -469,7 +471,7 @@ final class BitcoinKernel {
         guard let blockHash = btck_block_tree_entry_get_block_hash(entry) else {
             throw BitcoinKernelError.blockHashUnavailable
         }
-        let bestHash = api.hexString(for: blockHash)
+        let bestHash = Self.hexString(for: blockHash)
 
         guard let activeChain = btck_chainstate_manager_get_active_chain(chainstateManager) else {
             throw BitcoinKernelError.activeChainUnavailable
@@ -489,7 +491,7 @@ final class BitcoinKernel {
         guard let activeChainHash = btck_block_tree_entry_get_block_hash(activeChainEntry) else {
             throw BitcoinKernelError.blockHashUnavailable
         }
-        let activeChainTipHash = api.hexString(for: activeChainHash)
+        let activeChainTipHash = Self.hexString(for: activeChainHash)
         guard activeChainTipHash == bestHash else {
             throw BitcoinKernelError.activeChainTipMismatch(expected: bestHash, actual: activeChainTipHash)
         }
@@ -558,7 +560,7 @@ final class BitcoinKernel {
 
     func refreshLoggingSettings() {
         #if !DISABLE_KERNEL_LOGGING
-        api.applyLoggingPreferences(Self.runtimeLogSettings.current())
+        Self.applyLoggingPreferences(Self.runtimeLogSettings.current())
         #endif
     }
 
@@ -603,7 +605,7 @@ final class BitcoinKernel {
         }
         defer { btck_block_hash_destroy(blockHash) }
 
-        let headerHash = api.hexString(for: blockHash)
+        let headerHash = Self.hexString(for: blockHash)
         if let expectedHash, headerHash.caseInsensitiveCompare(expectedHash) != .orderedSame {
             throw BitcoinKernelError.blockHeaderHashMismatch(expected: expectedHash, actual: headerHash)
         }
@@ -614,7 +616,7 @@ final class BitcoinKernel {
 
         return BlockHeader(
             hash: headerHash,
-            previousHash: api.hexString(for: previousHash),
+            previousHash: Self.hexString(for: previousHash),
             version: btck_block_header_get_version(header),
             timestamp: btck_block_header_get_timestamp(header),
             bits: btck_block_header_get_bits(header),
@@ -902,7 +904,7 @@ final class BitcoinKernel {
             guard btck_txid_equals(previousTxid, borrowedPreviousTxid) == 1 else {
                 throw BitcoinKernelError.secondTransactionInspectionFailed("The copied prevout txid for input \(inputIndex) did not match the original.")
             }
-            _ = api.txidString(for: previousTxid)
+            _ = Self.txidString(for: previousTxid)
 
             guard let borrowedCoin = btck_transaction_spent_outputs_get_coin_at(copiedTransactionSpentOutputs, inputIndex) else {
                 throw BitcoinKernelError.secondTransactionInspectionFailed("Missing spent coin for input \(inputIndex).")
@@ -998,7 +1000,7 @@ final class BitcoinKernel {
             throw BitcoinKernelError.secondTransactionTxidUnavailable
         }
 
-        return api.txidString(for: txid)
+        return Self.txidString(for: txid)
     }
 
     private func serializeTransaction(_ transaction: OpaquePointer) throws -> Data {
@@ -1240,52 +1242,49 @@ final class BitcoinKernel {
         return String(decoding: UnsafeBufferPointer(start: UnsafePointer<UInt8>(OpaquePointer(rawString)), count: length), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
-}
 
-private final class KernelByteCollector {
-    var data = Data()
-}
-
-final class BitcoinKernelAPI {
-    typealias LogCallback = btck_LogCallback
-
-    private static let loggingDisableLock = NSLock()
-    private static var didDisableLogging = false
-
-    func makeChainParameters(signetChallenge: Data? = nil) throws -> OpaquePointer {
+    private static func makeChainParameters(signetChallenge: Data? = nil) throws -> OpaquePointer {
         if let signetChallenge {
             return try signetChallenge.withUnsafeBytes { buffer in
-                guard let chainParameters = btck_chain_parameters_create_signet(buffer.baseAddress, buffer.count) else {
+                guard let chainParameters = btck_chain_parameters_create_signet(
+                    buffer.baseAddress,
+                    buffer.count
+                ) else {
                     throw BitcoinKernelError.chainParametersCreationFailed
                 }
                 return chainParameters
             }
         }
 
-        guard let chainParameters = btck_chain_parameters_create(btck_swift_btck_ChainType_SIGNET()) else {
+        guard let chainParameters = btck_chain_parameters_create(
+            btck_swift_btck_ChainType_SIGNET()
+        ) else {
             throw BitcoinKernelError.chainParametersCreationFailed
         }
         return chainParameters
     }
 
-    func disableLoggingOnce() {
-        Self.loggingDisableLock.lock()
-        defer { Self.loggingDisableLock.unlock() }
+    private static func disableLoggingOnce() {
+        loggingDisableLock.lock()
+        defer { loggingDisableLock.unlock() }
 
-        guard !Self.didDisableLogging else {
+        guard !didDisableLogging else {
             return
         }
 
         btck_logging_disable()
-        Self.didDisableLogging = true
+        didDisableLogging = true
     }
 
-    func makeLoggingConnection(logCallback: @escaping LogCallback, settings: KernelLogSettingsSnapshot) -> OpaquePointer? {
+    private static func makeLoggingConnection(
+        logCallback: @escaping btck_LogCallback,
+        settings: KernelLogSettingsSnapshot
+    ) -> OpaquePointer? {
         applyLoggingPreferences(settings)
         return btck_logging_connection_create(logCallback, nil, nil)
     }
 
-    func applyLoggingPreferences(_ settings: KernelLogSettingsSnapshot) {
+    private static func applyLoggingPreferences(_ settings: KernelLogSettingsSnapshot) {
         btck_logging_set_options(
             btck_LoggingOptions(
                 log_timestamps: settings.logTimestamps ? 1 : 0,
@@ -1309,64 +1308,72 @@ final class BitcoinKernelAPI {
         }
     }
 
-    fileprivate func setNotifications(_ contextOptions: OpaquePointer, sink: KernelNotificationSink) {
+    private static func setNotifications(
+        _ contextOptions: OpaquePointer,
+        sink: KernelNotificationSink
+    ) {
         let retainedSink = Unmanaged.passRetained(sink)
         let callbacks = btck_NotificationInterfaceCallbacks(
             user_data: retainedSink.toOpaque(),
-            user_data_destroy: BitcoinKernel.kernelNotificationDestroyCallback,
+            user_data_destroy: kernelNotificationDestroyCallback,
             // Keep these callbacks wired so the C API path stays exercised, but rely on the
             // kernel's own log lines for the user-visible signal to avoid redundant noise.
-            block_tip: BitcoinKernel.kernelBlockTipCallback,
-            header_tip: BitcoinKernel.kernelHeaderTipCallback,
-            progress: BitcoinKernel.kernelProgressCallback,
-            warning_set: BitcoinKernel.kernelWarningSetCallback,
-            warning_unset: BitcoinKernel.kernelWarningUnsetCallback,
-            flush_error: BitcoinKernel.kernelFlushErrorCallback,
-            fatal_error: BitcoinKernel.kernelFatalErrorCallback
+            block_tip: kernelBlockTipCallback,
+            header_tip: kernelHeaderTipCallback,
+            progress: kernelProgressCallback,
+            warning_set: kernelWarningSetCallback,
+            warning_unset: kernelWarningUnsetCallback,
+            flush_error: kernelFlushErrorCallback,
+            fatal_error: kernelFatalErrorCallback
         )
 
         btck_context_options_set_notifications(contextOptions, callbacks)
     }
 
-    fileprivate func setValidationInterface(_ contextOptions: OpaquePointer, sink: KernelValidationSink) {
+    private static func setValidationInterface(
+        _ contextOptions: OpaquePointer,
+        sink: KernelValidationSink
+    ) {
         let retainedSink = Unmanaged.passRetained(sink)
         var callbacks = btck_ValidationInterfaceCallbacks()
         callbacks.user_data = retainedSink.toOpaque()
-        callbacks.user_data_destroy = BitcoinKernel.kernelValidationDestroyCallback
-        callbacks.block_checked = BitcoinKernel.kernelBlockCheckedCallback
-        callbacks.pow_valid_block = BitcoinKernel.kernelPoWValidBlockCallback
-        callbacks.block_connected = BitcoinKernel.kernelBlockConnectedCallback
-        callbacks.block_disconnected = BitcoinKernel.kernelBlockDisconnectedCallback
+        callbacks.user_data_destroy = kernelValidationDestroyCallback
+        callbacks.block_checked = kernelBlockCheckedCallback
+        callbacks.pow_valid_block = kernelPoWValidBlockCallback
+        callbacks.block_connected = kernelBlockConnectedCallback
+        callbacks.block_disconnected = kernelBlockDisconnectedCallback
 
         btck_context_options_set_validation_interface(contextOptions, callbacks)
     }
 
-    func makeContextOptions() throws -> OpaquePointer {
+    private static func makeContextOptions() throws -> OpaquePointer {
         guard let contextOptions = btck_context_options_create() else {
             throw BitcoinKernelError.contextOptionsCreationFailed
         }
         return contextOptions
     }
 
-    func hexString(for blockHash: OpaquePointer) -> String {
+    fileprivate static func hexString(for blockHash: OpaquePointer) -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
         btck_block_hash_to_bytes(blockHash, &bytes)
         return bytes.reversed().map { String(format: "%02x", $0) }.joined()
     }
 
-    func txidString(for txid: OpaquePointer) -> String {
+    private static func txidString(for txid: OpaquePointer) -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
         btck_txid_to_bytes(txid, &bytes)
         return bytes.reversed().map { String(format: "%02x", $0) }.joined()
     }
 }
 
+private final class KernelByteCollector {
+    var data = Data()
+}
+
 private final class KernelNotificationSink {
-    private let api: BitcoinKernelAPI
     let blockTipHandler: (@Sendable (ChainTip) -> Void)?
 
-    init(api: BitcoinKernelAPI, blockTipHandler: (@Sendable (ChainTip) -> Void)? = nil) {
-        self.api = api
+    init(blockTipHandler: (@Sendable (ChainTip) -> Void)? = nil) {
         self.blockTipHandler = blockTipHandler
     }
 
@@ -1376,7 +1383,7 @@ private final class KernelNotificationSink {
         }
 
         let height = Int(btck_block_tree_entry_get_height(entry))
-        let hash = btck_block_tree_entry_get_block_hash(entry).map(api.hexString(for:)) ?? ""
+        let hash = btck_block_tree_entry_get_block_hash(entry).map(BitcoinKernel.hexString(for:)) ?? ""
         blockTipHandler?(ChainTip(height: height, hash: hash))
     }
 
@@ -1463,12 +1470,6 @@ private final class KernelNotificationSink {
 }
 
 private final class KernelValidationSink {
-    private let api: BitcoinKernelAPI
-
-    init(api: BitcoinKernelAPI) {
-        self.api = api
-    }
-
     func logBlockChecked(block: OpaquePointer?, state: OpaquePointer?) {
         let settings = BitcoinKernel.currentDisplayLogSettings()
         guard settings.isEnabled, settings.enabledCategories.contains(KernelLogSettings.kernelLogCategoryValidation) else {
@@ -1533,7 +1534,7 @@ private final class KernelValidationSink {
             return nil
         }
         defer { btck_block_hash_destroy(blockHash) }
-        return api.hexString(for: blockHash)
+        return BitcoinKernel.hexString(for: blockHash)
     }
 
     private func entryInfo(_ entry: OpaquePointer?) -> (Int, String) {
@@ -1542,7 +1543,7 @@ private final class KernelValidationSink {
         }
 
         let height = Int(btck_block_tree_entry_get_height(entry))
-        let blockHash = btck_block_tree_entry_get_block_hash(entry).map(api.hexString(for:)) ?? "unavailable"
+        let blockHash = btck_block_tree_entry_get_block_hash(entry).map(BitcoinKernel.hexString(for:)) ?? "unavailable"
         return (height, blockHash)
     }
 
