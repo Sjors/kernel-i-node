@@ -194,10 +194,12 @@ struct NodeTests {
         defer { try? FileManager.default.removeItem(at: tmp) }
         let kernel = try BitcoinKernel(storageRoot: tmp, inMemory: true)
 
-        // Crafted 80-byte header with known little-endian field values.
+        // Crafted 80-byte header with known little-endian field values. The previous
+        // hash uses distinct ascending bytes so a byte-order mistake cannot go unnoticed.
+        let prevHashSerializedHex = (0..<32).map { String(format: "%02x", $0) }.joined()
         let rawHeaderHex =
             "20000000" +
-            String(repeating: "aa", count: 32) +
+            prevHashSerializedHex +
             String(repeating: "bb", count: 32) +
             "78563412" +
             "ae77031e" +
@@ -211,7 +213,9 @@ struct NodeTests {
         #expect(header.timestamp == 0x12345678)
         #expect(header.bits == 0x1e0377ae)
         #expect(header.nonce == 0xdeadbeef)
-        #expect(header.previousHash == String(repeating: "aa", count: 32))
+        // Hashes display in reverse byte order relative to their serialization.
+        let prevHashDisplayHex = (0..<32).reversed().map { String(format: "%02x", $0) }.joined()
+        #expect(header.previousHash == prevHashDisplayHex)
     }
 
     @Test func inMemoryKernelWithDefaultChallengeMatchesDefaultSignetGenesis() async throws {
