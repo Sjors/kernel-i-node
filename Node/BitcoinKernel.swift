@@ -2,28 +2,21 @@ import Darwin
 import Foundation
 import OSLog
 
-private let kernelLogCategoryAll: UInt8 = 0
-private let kernelLogLevelDebug: UInt8 = 1
-private let kernelLogLevelInfo: UInt8 = 2
-private let kernelSynchronizationStateInitReindex: UInt8 = 0
-private let kernelSynchronizationStateInitDownload: UInt8 = 1
-private let kernelSynchronizationStatePostInit: UInt8 = 2
-private let kernelWarningUnknownNewRulesActivated: UInt8 = 0
-private let kernelWarningLargeWorkInvalidChain: UInt8 = 1
-private let kernelValidationModeValid: UInt8 = 0
-private let kernelValidationModeInvalid: UInt8 = 1
-private let kernelValidationModeInternalError: UInt8 = 2
-private let kernelBlockCheckFlagsAll: UInt32 = (1 << 0) | (1 << 1)
-private let kernelTxValidationResultUnset: UInt32 = 0
-private let kernelScriptVerifyStatusOK: UInt8 = 0
-private let kernelScriptVerificationFlagsAll: UInt32 =
-    (1 << 0) |
-    (1 << 2) |
-    (1 << 4) |
-    (1 << 9) |
-    (1 << 10) |
-    (1 << 11) |
-    (1 << 17)
+private let kernelLogCategoryAll = btck_swift_btck_LogCategory_ALL()
+private let kernelLogLevelDebug = btck_swift_btck_LogLevel_DEBUG()
+private let kernelLogLevelInfo = btck_swift_btck_LogLevel_INFO()
+private let kernelSynchronizationStateInitReindex = btck_swift_btck_SynchronizationState_INIT_REINDEX()
+private let kernelSynchronizationStateInitDownload = btck_swift_btck_SynchronizationState_INIT_DOWNLOAD()
+private let kernelSynchronizationStatePostInit = btck_swift_btck_SynchronizationState_POST_INIT()
+private let kernelWarningUnknownNewRulesActivated = btck_swift_btck_Warning_UNKNOWN_NEW_RULES_ACTIVATED()
+private let kernelWarningLargeWorkInvalidChain = btck_swift_btck_Warning_LARGE_WORK_INVALID_CHAIN()
+private let kernelValidationModeValid = btck_swift_btck_ValidationMode_VALID()
+private let kernelValidationModeInvalid = btck_swift_btck_ValidationMode_INVALID()
+private let kernelValidationModeInternalError = btck_swift_btck_ValidationMode_INTERNAL_ERROR()
+private let kernelBlockCheckFlagsAll = btck_swift_btck_BlockCheckFlags_ALL()
+private let kernelTxValidationResultUnset = btck_swift_btck_TxValidationResult_UNSET()
+private let kernelScriptVerifyStatusOK = btck_swift_btck_ScriptVerifyStatus_OK()
+private let kernelScriptVerificationFlagsAll = btck_swift_btck_ScriptVerificationFlags_ALL()
 
 private final class RuntimeKernelLogSettings: @unchecked Sendable {
     private let lock = NSLock()
@@ -262,7 +255,7 @@ final class BitcoinKernel {
 
         Unmanaged<KernelNotificationSink>.fromOpaque(userData).release()
     }
-    fileprivate static let kernelBlockTipCallback: @convention(c) (UnsafeMutableRawPointer?, UInt8, UnsafeRawPointer?, Double) -> Void = { userData, state, entry, verificationProgress in
+    fileprivate static let kernelBlockTipCallback: @convention(c) (UnsafeMutableRawPointer?, UInt8, OpaquePointer?, Double) -> Void = { userData, state, entry, verificationProgress in
         guard let sink = notificationSink(from: userData) else {
             return
         }
@@ -318,28 +311,28 @@ final class BitcoinKernel {
 
         Unmanaged<KernelValidationSink>.fromOpaque(userData).release()
     }
-    fileprivate static let kernelBlockCheckedCallback: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeRawPointer?) -> Void = { userData, block, state in
+    fileprivate static let kernelBlockCheckedCallback: @convention(c) (UnsafeMutableRawPointer?, OpaquePointer?, OpaquePointer?) -> Void = { userData, block, state in
         guard let sink = validationSink(from: userData) else {
             return
         }
 
         sink.logBlockChecked(block: block, state: state)
     }
-    fileprivate static let kernelPoWValidBlockCallback: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeRawPointer?) -> Void = { userData, block, entry in
+    fileprivate static let kernelPoWValidBlockCallback: @convention(c) (UnsafeMutableRawPointer?, OpaquePointer?, OpaquePointer?) -> Void = { userData, block, entry in
         guard let sink = validationSink(from: userData) else {
             return
         }
 
         sink.logPoWValidBlock(block: block, entry: entry)
     }
-    fileprivate static let kernelBlockConnectedCallback: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeRawPointer?) -> Void = { userData, block, entry in
+    fileprivate static let kernelBlockConnectedCallback: @convention(c) (UnsafeMutableRawPointer?, OpaquePointer?, OpaquePointer?) -> Void = { userData, block, entry in
         guard let sink = validationSink(from: userData) else {
             return
         }
 
         sink.logBlockConnected(block: block, entry: entry)
     }
-    fileprivate static let kernelBlockDisconnectedCallback: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeRawPointer?) -> Void = { userData, block, entry in
+    fileprivate static let kernelBlockDisconnectedCallback: @convention(c) (UnsafeMutableRawPointer?, OpaquePointer?, OpaquePointer?) -> Void = { userData, block, entry in
         guard let sink = validationSink(from: userData) else {
             return
         }
@@ -1264,11 +1257,11 @@ private final class KernelByteCollector {
 
 // Internal (not private) so unit tests can exercise kernel functions directly.
 final class LoadedBitcoinKernel {
-    typealias ChainType = UInt8
-    typealias LogCategory = UInt8
-    typealias LogLevel = UInt8
-    typealias LogCallback = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Int) -> Void
-    typealias WriteBytesCallback = @convention(c) (UnsafeRawPointer?, Int, UnsafeMutableRawPointer?) -> Int32
+    typealias ChainType = btck_ChainType
+    typealias LogCategory = btck_LogCategory
+    typealias LogLevel = btck_LogLevel
+    typealias LogCallback = btck_LogCallback
+    typealias WriteBytesCallback = btck_WriteBytes
 
     private let handle: UnsafeMutableRawPointer
     private static let loggingDisableLock = NSLock()
@@ -1424,13 +1417,6 @@ final class LoadedBitcoinKernel {
             throw BitcoinKernelError.libraryOpenFailed(message)
         }
 
-        func loadSymbol<Function>(_ symbol: String) throws -> Function {
-            guard let rawSymbol = dlsym(handle, symbol) else {
-                throw BitcoinKernelError.symbolMissing(symbol)
-            }
-            return unsafeBitCast(rawSymbol, to: Function.self)
-        }
-
         func loadRawSymbol(_ symbol: String) throws -> UnsafeMutableRawPointer {
             guard let rawSymbol = dlsym(handle, symbol) else {
                 throw BitcoinKernelError.symbolMissing(symbol)
@@ -1443,136 +1429,139 @@ final class LoadedBitcoinKernel {
         btck_context_options_set_validation_interface_raw = try loadRawSymbol("btck_context_options_set_validation_interface")
         btck_logging_disable_raw = try loadRawSymbol("btck_logging_disable")
         btck_logging_set_options_raw = try loadRawSymbol("btck_logging_set_options")
-        btck_logging_set_level_category = try loadSymbol("btck_logging_set_level_category")
-        btck_logging_enable_category = try loadSymbol("btck_logging_enable_category")
-        btck_logging_disable_category = try loadSymbol("btck_logging_disable_category")
-        btck_logging_connection_create = try loadSymbol("btck_logging_connection_create")
-        btck_logging_connection_destroy = try loadSymbol("btck_logging_connection_destroy")
-        btck_chain_parameters_create = try loadSymbol("btck_chain_parameters_create")
-        btck_chain_parameters_create_signet = try loadSymbol("btck_chain_parameters_create_signet")
-        btck_chain_parameters_get_consensus_params = try loadSymbol("btck_chain_parameters_get_consensus_params")
-        btck_block_check = try loadSymbol("btck_block_check")
-        btck_transaction_check = try loadSymbol("btck_transaction_check")
-        btck_tx_validation_state_create = try loadSymbol("btck_tx_validation_state_create")
-        btck_tx_validation_state_get_validation_mode = try loadSymbol("btck_tx_validation_state_get_validation_mode")
-        btck_tx_validation_state_get_tx_validation_result = try loadSymbol("btck_tx_validation_state_get_tx_validation_result")
-        btck_tx_validation_state_destroy = try loadSymbol("btck_tx_validation_state_destroy")
-        btck_transaction_get_locktime = try loadSymbol("btck_transaction_get_locktime")
-        btck_transaction_input_get_sequence = try loadSymbol("btck_transaction_input_get_sequence")
-        btck_transaction_input_get_script_sig = try loadSymbol("btck_transaction_input_get_script_sig")
-        btck_transaction_input_get_witness_stack = try loadSymbol("btck_transaction_input_get_witness_stack")
-        btck_witness_stack_copy = try loadSymbol("btck_witness_stack_copy")
-        btck_witness_stack_count_items = try loadSymbol("btck_witness_stack_count_items")
-        btck_witness_stack_get_item_at = try loadSymbol("btck_witness_stack_get_item_at")
-        btck_witness_stack_destroy = try loadSymbol("btck_witness_stack_destroy")
-        btck_chain_parameters_copy = try loadSymbol("btck_chain_parameters_copy")
-        btck_chain_parameters_destroy = try loadSymbol("btck_chain_parameters_destroy")
-        btck_context_options_create = try loadSymbol("btck_context_options_create")
-        btck_context_options_set_chainparams = try loadSymbol("btck_context_options_set_chainparams")
-        btck_context_options_destroy = try loadSymbol("btck_context_options_destroy")
-        btck_context_create = try loadSymbol("btck_context_create")
-        btck_context_copy = try loadSymbol("btck_context_copy")
-        btck_context_interrupt = try loadSymbol("btck_context_interrupt")
-        btck_context_destroy = try loadSymbol("btck_context_destroy")
-        btck_chainstate_manager_options_create = try loadSymbol("btck_chainstate_manager_options_create")
-        btck_chainstate_manager_options_set_worker_threads_num = try loadSymbol("btck_chainstate_manager_options_set_worker_threads_num")
-        btck_chainstate_manager_options_set_wipe_dbs = try loadSymbol("btck_chainstate_manager_options_set_wipe_dbs")
-        btck_chainstate_manager_options_update_block_tree_db_in_memory = try loadSymbol("btck_chainstate_manager_options_update_block_tree_db_in_memory")
-        btck_chainstate_manager_options_update_chainstate_db_in_memory = try loadSymbol("btck_chainstate_manager_options_update_chainstate_db_in_memory")
-        btck_chainstate_manager_options_destroy = try loadSymbol("btck_chainstate_manager_options_destroy")
-        btck_chainstate_manager_create = try loadSymbol("btck_chainstate_manager_create")
-        btck_chainstate_manager_destroy = try loadSymbol("btck_chainstate_manager_destroy")
-        btck_chainstate_manager_get_best_entry = try loadSymbol("btck_chainstate_manager_get_best_entry")
-        btck_chainstate_manager_get_active_chain = try loadSymbol("btck_chainstate_manager_get_active_chain")
-        btck_chainstate_manager_import_blocks = try loadSymbol("btck_chainstate_manager_import_blocks")
-        btck_chain_get_height = try loadSymbol("btck_chain_get_height")
-        btck_chain_get_by_height = try loadSymbol("btck_chain_get_by_height")
-        btck_chain_contains = try loadSymbol("btck_chain_contains")
-        btck_block_tree_entry_get_previous = try loadSymbol("btck_block_tree_entry_get_previous")
-        btck_block_tree_entry_get_ancestor = try loadSymbol("btck_block_tree_entry_get_ancestor")
-        btck_block_tree_entry_get_block_header = try loadSymbol("btck_block_tree_entry_get_block_header")
-        btck_block_tree_entry_get_height = try loadSymbol("btck_block_tree_entry_get_height")
-        btck_block_tree_entry_get_block_hash = try loadSymbol("btck_block_tree_entry_get_block_hash")
-        btck_block_tree_entry_equals = try loadSymbol("btck_block_tree_entry_equals")
-        btck_block_header_create = try loadSymbol("btck_block_header_create")
-        btck_block_header_copy = try loadSymbol("btck_block_header_copy")
-        btck_block_header_get_hash = try loadSymbol("btck_block_header_get_hash")
-        btck_block_header_get_prev_hash = try loadSymbol("btck_block_header_get_prev_hash")
-        btck_block_header_get_timestamp = try loadSymbol("btck_block_header_get_timestamp")
-        btck_block_header_get_bits = try loadSymbol("btck_block_header_get_bits")
-        btck_block_header_get_version = try loadSymbol("btck_block_header_get_version")
-        btck_block_header_get_nonce = try loadSymbol("btck_block_header_get_nonce")
-        btck_block_header_to_bytes = try loadSymbol("btck_block_header_to_bytes")
-        btck_block_header_destroy = try loadSymbol("btck_block_header_destroy")
-        btck_block_validation_state_create = try loadSymbol("btck_block_validation_state_create")
-        btck_block_validation_state_copy = try loadSymbol("btck_block_validation_state_copy")
-        btck_block_validation_state_get_validation_mode = try loadSymbol("btck_block_validation_state_get_validation_mode")
-        btck_block_validation_state_get_block_validation_result = try loadSymbol("btck_block_validation_state_get_block_validation_result")
-        btck_block_validation_state_destroy = try loadSymbol("btck_block_validation_state_destroy")
-        btck_block_read = try loadSymbol("btck_block_read")
-        btck_block_copy = try loadSymbol("btck_block_copy")
-        btck_block_get_header = try loadSymbol("btck_block_get_header")
-        btck_block_hash_create = try loadSymbol("btck_block_hash_create")
-        btck_block_hash_equals = try loadSymbol("btck_block_hash_equals")
-        btck_block_hash_copy = try loadSymbol("btck_block_hash_copy")
-        btck_block_hash_to_bytes = try loadSymbol("btck_block_hash_to_bytes")
-        btck_block_hash_destroy = try loadSymbol("btck_block_hash_destroy")
-        btck_block_create = try loadSymbol("btck_block_create")
-        btck_block_count_transactions = try loadSymbol("btck_block_count_transactions")
-        btck_block_get_transaction_at = try loadSymbol("btck_block_get_transaction_at")
-        btck_block_get_hash = try loadSymbol("btck_block_get_hash")
-        btck_block_to_bytes = try loadSymbol("btck_block_to_bytes")
-        btck_block_destroy = try loadSymbol("btck_block_destroy")
-        btck_transaction_create = try loadSymbol("btck_transaction_create")
-        btck_transaction_copy = try loadSymbol("btck_transaction_copy")
-        btck_transaction_to_bytes = try loadSymbol("btck_transaction_to_bytes")
-        btck_transaction_count_outputs = try loadSymbol("btck_transaction_count_outputs")
-        btck_transaction_get_output_at = try loadSymbol("btck_transaction_get_output_at")
-        btck_transaction_get_input_at = try loadSymbol("btck_transaction_get_input_at")
-        btck_transaction_count_inputs = try loadSymbol("btck_transaction_count_inputs")
-        btck_transaction_get_txid = try loadSymbol("btck_transaction_get_txid")
-        btck_transaction_destroy = try loadSymbol("btck_transaction_destroy")
-        btck_precomputed_transaction_data_create = try loadSymbol("btck_precomputed_transaction_data_create")
-        btck_precomputed_transaction_data_copy = try loadSymbol("btck_precomputed_transaction_data_copy")
-        btck_precomputed_transaction_data_destroy = try loadSymbol("btck_precomputed_transaction_data_destroy")
-        btck_script_pubkey_verify = try loadSymbol("btck_script_pubkey_verify")
-        btck_script_pubkey_copy = try loadSymbol("btck_script_pubkey_copy")
-        btck_script_pubkey_create = try loadSymbol("btck_script_pubkey_create")
-        btck_script_pubkey_to_bytes = try loadSymbol("btck_script_pubkey_to_bytes")
-        btck_script_pubkey_destroy = try loadSymbol("btck_script_pubkey_destroy")
-        btck_transaction_output_create = try loadSymbol("btck_transaction_output_create")
-        btck_transaction_output_get_script_pubkey = try loadSymbol("btck_transaction_output_get_script_pubkey")
-        btck_transaction_output_get_amount = try loadSymbol("btck_transaction_output_get_amount")
-        btck_transaction_output_copy = try loadSymbol("btck_transaction_output_copy")
-        btck_transaction_output_destroy = try loadSymbol("btck_transaction_output_destroy")
-        btck_chainstate_manager_process_block_header = try loadSymbol("btck_chainstate_manager_process_block_header")
-        btck_chainstate_manager_process_block = try loadSymbol("btck_chainstate_manager_process_block")
-        btck_chainstate_manager_get_block_tree_entry_by_hash = try loadSymbol("btck_chainstate_manager_get_block_tree_entry_by_hash")
-        btck_block_spent_outputs_read = try loadSymbol("btck_block_spent_outputs_read")
-        btck_block_spent_outputs_copy = try loadSymbol("btck_block_spent_outputs_copy")
-        btck_block_spent_outputs_count = try loadSymbol("btck_block_spent_outputs_count")
-        btck_block_spent_outputs_get_transaction_spent_outputs_at = try loadSymbol("btck_block_spent_outputs_get_transaction_spent_outputs_at")
-        btck_block_spent_outputs_destroy = try loadSymbol("btck_block_spent_outputs_destroy")
-        btck_transaction_spent_outputs_copy = try loadSymbol("btck_transaction_spent_outputs_copy")
-        btck_transaction_spent_outputs_count = try loadSymbol("btck_transaction_spent_outputs_count")
-        btck_transaction_spent_outputs_get_coin_at = try loadSymbol("btck_transaction_spent_outputs_get_coin_at")
-        btck_transaction_spent_outputs_destroy = try loadSymbol("btck_transaction_spent_outputs_destroy")
-        btck_transaction_input_copy = try loadSymbol("btck_transaction_input_copy")
-        btck_transaction_input_get_out_point = try loadSymbol("btck_transaction_input_get_out_point")
-        btck_transaction_input_destroy = try loadSymbol("btck_transaction_input_destroy")
-        btck_transaction_out_point_copy = try loadSymbol("btck_transaction_out_point_copy")
-        btck_transaction_out_point_get_index = try loadSymbol("btck_transaction_out_point_get_index")
-        btck_transaction_out_point_get_txid = try loadSymbol("btck_transaction_out_point_get_txid")
-        btck_transaction_out_point_destroy = try loadSymbol("btck_transaction_out_point_destroy")
-        btck_txid_copy = try loadSymbol("btck_txid_copy")
-        btck_txid_equals = try loadSymbol("btck_txid_equals")
-        btck_txid_to_bytes = try loadSymbol("btck_txid_to_bytes")
-        btck_txid_destroy = try loadSymbol("btck_txid_destroy")
-        btck_coin_copy = try loadSymbol("btck_coin_copy")
-        btck_coin_confirmation_height = try loadSymbol("btck_coin_confirmation_height")
-        btck_coin_is_coinbase = try loadSymbol("btck_coin_is_coinbase")
-        btck_coin_get_output = try loadSymbol("btck_coin_get_output")
-        btck_coin_destroy = try loadSymbol("btck_coin_destroy")
+        btck_logging_set_level_category = btck_dlsym_cast_btck_logging_set_level_category(try loadRawSymbol("btck_logging_set_level_category"))
+        btck_logging_enable_category = btck_dlsym_cast_btck_logging_enable_category(try loadRawSymbol("btck_logging_enable_category"))
+        btck_logging_disable_category = btck_dlsym_cast_btck_logging_disable_category(try loadRawSymbol("btck_logging_disable_category"))
+        btck_logging_connection_create = btck_dlsym_cast_btck_logging_connection_create(try loadRawSymbol("btck_logging_connection_create"))
+        btck_logging_connection_destroy = btck_dlsym_cast_btck_logging_connection_destroy(try loadRawSymbol("btck_logging_connection_destroy"))
+        btck_chain_parameters_create = btck_dlsym_cast_btck_chain_parameters_create(try loadRawSymbol("btck_chain_parameters_create"))
+        btck_chain_parameters_create_signet = btck_dlsym_cast_btck_chain_parameters_create_signet(try loadRawSymbol("btck_chain_parameters_create_signet"))
+        btck_chain_parameters_get_consensus_params = btck_dlsym_cast_btck_chain_parameters_get_consensus_params(try loadRawSymbol("btck_chain_parameters_get_consensus_params"))
+        btck_block_check = btck_dlsym_cast_btck_block_check(try loadRawSymbol("btck_block_check"))
+        btck_transaction_check = btck_dlsym_cast_btck_transaction_check(try loadRawSymbol("btck_transaction_check"))
+        btck_tx_validation_state_create = btck_dlsym_cast_btck_tx_validation_state_create(try loadRawSymbol("btck_tx_validation_state_create"))
+        btck_tx_validation_state_get_validation_mode = btck_dlsym_cast_btck_tx_validation_state_get_validation_mode(try loadRawSymbol("btck_tx_validation_state_get_validation_mode"))
+        btck_tx_validation_state_get_tx_validation_result = btck_dlsym_cast_btck_tx_validation_state_get_tx_validation_result(try loadRawSymbol("btck_tx_validation_state_get_tx_validation_result"))
+        btck_tx_validation_state_destroy = btck_dlsym_cast_btck_tx_validation_state_destroy(try loadRawSymbol("btck_tx_validation_state_destroy"))
+        btck_transaction_get_locktime = btck_dlsym_cast_btck_transaction_get_locktime(try loadRawSymbol("btck_transaction_get_locktime"))
+        btck_transaction_input_get_sequence = btck_dlsym_cast_btck_transaction_input_get_sequence(try loadRawSymbol("btck_transaction_input_get_sequence"))
+        btck_transaction_input_get_script_sig = btck_dlsym_cast_btck_transaction_input_get_script_sig(try loadRawSymbol("btck_transaction_input_get_script_sig"))
+        btck_transaction_input_get_witness_stack = btck_dlsym_cast_btck_transaction_input_get_witness_stack(try loadRawSymbol("btck_transaction_input_get_witness_stack"))
+        btck_witness_stack_copy = btck_dlsym_cast_btck_witness_stack_copy(try loadRawSymbol("btck_witness_stack_copy"))
+        btck_witness_stack_count_items = btck_dlsym_cast_btck_witness_stack_count_items(try loadRawSymbol("btck_witness_stack_count_items"))
+        btck_witness_stack_get_item_at = btck_dlsym_cast_btck_witness_stack_get_item_at(try loadRawSymbol("btck_witness_stack_get_item_at"))
+        btck_witness_stack_destroy = btck_dlsym_cast_btck_witness_stack_destroy(try loadRawSymbol("btck_witness_stack_destroy"))
+        btck_chain_parameters_copy = btck_dlsym_cast_btck_chain_parameters_copy(try loadRawSymbol("btck_chain_parameters_copy"))
+        btck_chain_parameters_destroy = btck_dlsym_cast_btck_chain_parameters_destroy(try loadRawSymbol("btck_chain_parameters_destroy"))
+        btck_context_options_create = btck_dlsym_cast_btck_context_options_create(try loadRawSymbol("btck_context_options_create"))
+        btck_context_options_set_chainparams = btck_dlsym_cast_btck_context_options_set_chainparams(try loadRawSymbol("btck_context_options_set_chainparams"))
+        btck_context_options_destroy = btck_dlsym_cast_btck_context_options_destroy(try loadRawSymbol("btck_context_options_destroy"))
+        btck_context_create = btck_dlsym_cast_btck_context_create(try loadRawSymbol("btck_context_create"))
+        btck_context_copy = btck_dlsym_cast_btck_context_copy(try loadRawSymbol("btck_context_copy"))
+        btck_context_interrupt = btck_dlsym_cast_btck_context_interrupt(try loadRawSymbol("btck_context_interrupt"))
+        btck_context_destroy = btck_dlsym_cast_btck_context_destroy(try loadRawSymbol("btck_context_destroy"))
+        btck_chainstate_manager_options_create = btck_dlsym_cast_btck_chainstate_manager_options_create(try loadRawSymbol("btck_chainstate_manager_options_create"))
+        btck_chainstate_manager_options_set_worker_threads_num = btck_dlsym_cast_btck_chainstate_manager_options_set_worker_threads_num(try loadRawSymbol("btck_chainstate_manager_options_set_worker_threads_num"))
+        btck_chainstate_manager_options_set_wipe_dbs = btck_dlsym_cast_btck_chainstate_manager_options_set_wipe_dbs(try loadRawSymbol("btck_chainstate_manager_options_set_wipe_dbs"))
+        btck_chainstate_manager_options_update_block_tree_db_in_memory = btck_dlsym_cast_btck_chainstate_manager_options_update_block_tree_db_in_memory(try loadRawSymbol("btck_chainstate_manager_options_update_block_tree_db_in_memory"))
+        btck_chainstate_manager_options_update_chainstate_db_in_memory = btck_dlsym_cast_btck_chainstate_manager_options_update_chainstate_db_in_memory(try loadRawSymbol("btck_chainstate_manager_options_update_chainstate_db_in_memory"))
+        btck_chainstate_manager_options_destroy = btck_dlsym_cast_btck_chainstate_manager_options_destroy(try loadRawSymbol("btck_chainstate_manager_options_destroy"))
+        btck_chainstate_manager_create = btck_dlsym_cast_btck_chainstate_manager_create(try loadRawSymbol("btck_chainstate_manager_create"))
+        btck_chainstate_manager_destroy = btck_dlsym_cast_btck_chainstate_manager_destroy(try loadRawSymbol("btck_chainstate_manager_destroy"))
+        btck_chainstate_manager_get_best_entry = btck_dlsym_cast_btck_chainstate_manager_get_best_entry(try loadRawSymbol("btck_chainstate_manager_get_best_entry"))
+        btck_chainstate_manager_get_active_chain = btck_dlsym_cast_btck_chainstate_manager_get_active_chain(try loadRawSymbol("btck_chainstate_manager_get_active_chain"))
+        btck_chainstate_manager_import_blocks = btck_dlsym_cast_btck_chainstate_manager_import_blocks(try loadRawSymbol("btck_chainstate_manager_import_blocks"))
+        btck_chain_get_height = btck_dlsym_cast_btck_chain_get_height(try loadRawSymbol("btck_chain_get_height"))
+        btck_chain_get_by_height = btck_dlsym_cast_btck_chain_get_by_height(try loadRawSymbol("btck_chain_get_by_height"))
+        btck_chain_contains = btck_dlsym_cast_btck_chain_contains(try loadRawSymbol("btck_chain_contains"))
+        btck_block_tree_entry_get_previous = btck_dlsym_cast_btck_block_tree_entry_get_previous(try loadRawSymbol("btck_block_tree_entry_get_previous"))
+        btck_block_tree_entry_get_ancestor = btck_dlsym_cast_btck_block_tree_entry_get_ancestor(try loadRawSymbol("btck_block_tree_entry_get_ancestor"))
+        btck_block_tree_entry_get_block_header = btck_dlsym_cast_btck_block_tree_entry_get_block_header(try loadRawSymbol("btck_block_tree_entry_get_block_header"))
+        btck_block_tree_entry_get_height = btck_dlsym_cast_btck_block_tree_entry_get_height(try loadRawSymbol("btck_block_tree_entry_get_height"))
+        btck_block_tree_entry_get_block_hash = btck_dlsym_cast_btck_block_tree_entry_get_block_hash(try loadRawSymbol("btck_block_tree_entry_get_block_hash"))
+        btck_block_tree_entry_equals = btck_dlsym_cast_btck_block_tree_entry_equals(try loadRawSymbol("btck_block_tree_entry_equals"))
+        btck_block_header_create = btck_dlsym_cast_btck_block_header_create(try loadRawSymbol("btck_block_header_create"))
+        btck_block_header_copy = btck_dlsym_cast_btck_block_header_copy(try loadRawSymbol("btck_block_header_copy"))
+        btck_block_header_get_hash = btck_dlsym_cast_btck_block_header_get_hash(try loadRawSymbol("btck_block_header_get_hash"))
+        btck_block_header_get_prev_hash = btck_dlsym_cast_btck_block_header_get_prev_hash(try loadRawSymbol("btck_block_header_get_prev_hash"))
+        btck_block_header_get_timestamp = btck_dlsym_cast_btck_block_header_get_timestamp(try loadRawSymbol("btck_block_header_get_timestamp"))
+        btck_block_header_get_bits = btck_dlsym_cast_btck_block_header_get_bits(try loadRawSymbol("btck_block_header_get_bits"))
+        btck_block_header_get_version = btck_dlsym_cast_btck_block_header_get_version(try loadRawSymbol("btck_block_header_get_version"))
+        btck_block_header_get_nonce = btck_dlsym_cast_btck_block_header_get_nonce(try loadRawSymbol("btck_block_header_get_nonce"))
+        btck_block_header_to_bytes = btck_dlsym_cast_btck_block_header_to_bytes(try loadRawSymbol("btck_block_header_to_bytes"))
+        btck_block_header_destroy = btck_dlsym_cast_btck_block_header_destroy(try loadRawSymbol("btck_block_header_destroy"))
+        btck_block_validation_state_create = btck_dlsym_cast_btck_block_validation_state_create(try loadRawSymbol("btck_block_validation_state_create"))
+        btck_block_validation_state_copy = btck_dlsym_cast_btck_block_validation_state_copy(try loadRawSymbol("btck_block_validation_state_copy"))
+        btck_block_validation_state_get_validation_mode = btck_dlsym_cast_btck_block_validation_state_get_validation_mode(try loadRawSymbol("btck_block_validation_state_get_validation_mode"))
+        btck_block_validation_state_get_block_validation_result = btck_dlsym_cast_btck_block_validation_state_get_block_validation_result(try loadRawSymbol("btck_block_validation_state_get_block_validation_result"))
+        btck_block_validation_state_destroy = btck_dlsym_cast_btck_block_validation_state_destroy(try loadRawSymbol("btck_block_validation_state_destroy"))
+        btck_block_read = btck_dlsym_cast_btck_block_read(try loadRawSymbol("btck_block_read"))
+        btck_block_copy = btck_dlsym_cast_btck_block_copy(try loadRawSymbol("btck_block_copy"))
+        btck_block_get_header = btck_dlsym_cast_btck_block_get_header(try loadRawSymbol("btck_block_get_header"))
+        btck_block_hash_create = btck_dlsym_cast_btck_block_hash_create(try loadRawSymbol("btck_block_hash_create"))
+        btck_block_hash_equals = btck_dlsym_cast_btck_block_hash_equals(try loadRawSymbol("btck_block_hash_equals"))
+        btck_block_hash_copy = btck_dlsym_cast_btck_block_hash_copy(try loadRawSymbol("btck_block_hash_copy"))
+        btck_block_hash_to_bytes = btck_dlsym_cast_btck_block_hash_to_bytes(try loadRawSymbol("btck_block_hash_to_bytes"))
+        btck_block_hash_destroy = btck_dlsym_cast_btck_block_hash_destroy(try loadRawSymbol("btck_block_hash_destroy"))
+        btck_block_create = btck_dlsym_cast_btck_block_create(try loadRawSymbol("btck_block_create"))
+        btck_block_count_transactions = btck_dlsym_cast_btck_block_count_transactions(try loadRawSymbol("btck_block_count_transactions"))
+        btck_block_get_transaction_at = btck_dlsym_cast_btck_block_get_transaction_at(try loadRawSymbol("btck_block_get_transaction_at"))
+        btck_block_get_hash = btck_dlsym_cast_btck_block_get_hash(try loadRawSymbol("btck_block_get_hash"))
+        btck_block_to_bytes = btck_dlsym_cast_btck_block_to_bytes(try loadRawSymbol("btck_block_to_bytes"))
+        btck_block_destroy = btck_dlsym_cast_btck_block_destroy(try loadRawSymbol("btck_block_destroy"))
+        btck_transaction_create = btck_dlsym_cast_btck_transaction_create(try loadRawSymbol("btck_transaction_create"))
+        btck_transaction_copy = btck_dlsym_cast_btck_transaction_copy(try loadRawSymbol("btck_transaction_copy"))
+        btck_transaction_to_bytes = btck_dlsym_cast_btck_transaction_to_bytes(try loadRawSymbol("btck_transaction_to_bytes"))
+        btck_transaction_count_outputs = btck_dlsym_cast_btck_transaction_count_outputs(try loadRawSymbol("btck_transaction_count_outputs"))
+        btck_transaction_get_output_at = btck_dlsym_cast_btck_transaction_get_output_at(try loadRawSymbol("btck_transaction_get_output_at"))
+        btck_transaction_get_input_at = btck_dlsym_cast_btck_transaction_get_input_at(try loadRawSymbol("btck_transaction_get_input_at"))
+        btck_transaction_count_inputs = btck_dlsym_cast_btck_transaction_count_inputs(try loadRawSymbol("btck_transaction_count_inputs"))
+        btck_transaction_get_txid = btck_dlsym_cast_btck_transaction_get_txid(try loadRawSymbol("btck_transaction_get_txid"))
+        btck_transaction_destroy = btck_dlsym_cast_btck_transaction_destroy(try loadRawSymbol("btck_transaction_destroy"))
+        btck_precomputed_transaction_data_create = btck_dlsym_cast_btck_precomputed_transaction_data_create(try loadRawSymbol("btck_precomputed_transaction_data_create"))
+        btck_precomputed_transaction_data_copy = btck_dlsym_cast_btck_precomputed_transaction_data_copy(try loadRawSymbol("btck_precomputed_transaction_data_copy"))
+        btck_precomputed_transaction_data_destroy = btck_dlsym_cast_btck_precomputed_transaction_data_destroy(try loadRawSymbol("btck_precomputed_transaction_data_destroy"))
+        btck_script_pubkey_verify = btck_dlsym_cast_btck_script_pubkey_verify(try loadRawSymbol("btck_script_pubkey_verify"))
+        btck_script_pubkey_copy = btck_dlsym_cast_btck_script_pubkey_copy(try loadRawSymbol("btck_script_pubkey_copy"))
+        btck_script_pubkey_create = btck_dlsym_cast_btck_script_pubkey_create(try loadRawSymbol("btck_script_pubkey_create"))
+        btck_script_pubkey_to_bytes = btck_dlsym_cast_btck_script_pubkey_to_bytes(try loadRawSymbol("btck_script_pubkey_to_bytes"))
+        btck_script_pubkey_destroy = btck_dlsym_cast_btck_script_pubkey_destroy(try loadRawSymbol("btck_script_pubkey_destroy"))
+        btck_transaction_output_create = btck_dlsym_cast_btck_transaction_output_create(try loadRawSymbol("btck_transaction_output_create"))
+        btck_transaction_output_get_script_pubkey = btck_dlsym_cast_btck_transaction_output_get_script_pubkey(try loadRawSymbol("btck_transaction_output_get_script_pubkey"))
+        btck_transaction_output_get_amount = btck_dlsym_cast_btck_transaction_output_get_amount(try loadRawSymbol("btck_transaction_output_get_amount"))
+        btck_transaction_output_copy = btck_dlsym_cast_btck_transaction_output_copy(try loadRawSymbol("btck_transaction_output_copy"))
+        btck_transaction_output_destroy = btck_dlsym_cast_btck_transaction_output_destroy(try loadRawSymbol("btck_transaction_output_destroy"))
+        btck_chainstate_manager_process_block_header =
+            btck_dlsym_cast_btck_chainstate_manager_process_block_header(
+                try loadRawSymbol("btck_chainstate_manager_process_block_header")
+            )
+        btck_chainstate_manager_process_block = btck_dlsym_cast_btck_chainstate_manager_process_block(try loadRawSymbol("btck_chainstate_manager_process_block"))
+        btck_chainstate_manager_get_block_tree_entry_by_hash = btck_dlsym_cast_btck_chainstate_manager_get_block_tree_entry_by_hash(try loadRawSymbol("btck_chainstate_manager_get_block_tree_entry_by_hash"))
+        btck_block_spent_outputs_read = btck_dlsym_cast_btck_block_spent_outputs_read(try loadRawSymbol("btck_block_spent_outputs_read"))
+        btck_block_spent_outputs_copy = btck_dlsym_cast_btck_block_spent_outputs_copy(try loadRawSymbol("btck_block_spent_outputs_copy"))
+        btck_block_spent_outputs_count = btck_dlsym_cast_btck_block_spent_outputs_count(try loadRawSymbol("btck_block_spent_outputs_count"))
+        btck_block_spent_outputs_get_transaction_spent_outputs_at = btck_dlsym_cast_btck_block_spent_outputs_get_transaction_spent_outputs_at(try loadRawSymbol("btck_block_spent_outputs_get_transaction_spent_outputs_at"))
+        btck_block_spent_outputs_destroy = btck_dlsym_cast_btck_block_spent_outputs_destroy(try loadRawSymbol("btck_block_spent_outputs_destroy"))
+        btck_transaction_spent_outputs_copy = btck_dlsym_cast_btck_transaction_spent_outputs_copy(try loadRawSymbol("btck_transaction_spent_outputs_copy"))
+        btck_transaction_spent_outputs_count = btck_dlsym_cast_btck_transaction_spent_outputs_count(try loadRawSymbol("btck_transaction_spent_outputs_count"))
+        btck_transaction_spent_outputs_get_coin_at = btck_dlsym_cast_btck_transaction_spent_outputs_get_coin_at(try loadRawSymbol("btck_transaction_spent_outputs_get_coin_at"))
+        btck_transaction_spent_outputs_destroy = btck_dlsym_cast_btck_transaction_spent_outputs_destroy(try loadRawSymbol("btck_transaction_spent_outputs_destroy"))
+        btck_transaction_input_copy = btck_dlsym_cast_btck_transaction_input_copy(try loadRawSymbol("btck_transaction_input_copy"))
+        btck_transaction_input_get_out_point = btck_dlsym_cast_btck_transaction_input_get_out_point(try loadRawSymbol("btck_transaction_input_get_out_point"))
+        btck_transaction_input_destroy = btck_dlsym_cast_btck_transaction_input_destroy(try loadRawSymbol("btck_transaction_input_destroy"))
+        btck_transaction_out_point_copy = btck_dlsym_cast_btck_transaction_out_point_copy(try loadRawSymbol("btck_transaction_out_point_copy"))
+        btck_transaction_out_point_get_index = btck_dlsym_cast_btck_transaction_out_point_get_index(try loadRawSymbol("btck_transaction_out_point_get_index"))
+        btck_transaction_out_point_get_txid = btck_dlsym_cast_btck_transaction_out_point_get_txid(try loadRawSymbol("btck_transaction_out_point_get_txid"))
+        btck_transaction_out_point_destroy = btck_dlsym_cast_btck_transaction_out_point_destroy(try loadRawSymbol("btck_transaction_out_point_destroy"))
+        btck_txid_copy = btck_dlsym_cast_btck_txid_copy(try loadRawSymbol("btck_txid_copy"))
+        btck_txid_equals = btck_dlsym_cast_btck_txid_equals(try loadRawSymbol("btck_txid_equals"))
+        btck_txid_to_bytes = btck_dlsym_cast_btck_txid_to_bytes(try loadRawSymbol("btck_txid_to_bytes"))
+        btck_txid_destroy = btck_dlsym_cast_btck_txid_destroy(try loadRawSymbol("btck_txid_destroy"))
+        btck_coin_copy = btck_dlsym_cast_btck_coin_copy(try loadRawSymbol("btck_coin_copy"))
+        btck_coin_confirmation_height = btck_dlsym_cast_btck_coin_confirmation_height(try loadRawSymbol("btck_coin_confirmation_height"))
+        btck_coin_is_coinbase = btck_dlsym_cast_btck_coin_is_coinbase(try loadRawSymbol("btck_coin_is_coinbase"))
+        btck_coin_get_output = btck_dlsym_cast_btck_coin_get_output(try loadRawSymbol("btck_coin_get_output"))
+        btck_coin_destroy = btck_dlsym_cast_btck_coin_destroy(try loadRawSymbol("btck_coin_destroy"))
     }
 
     deinit {
@@ -1589,7 +1578,7 @@ final class LoadedBitcoinKernel {
             }
         }
 
-        guard let chainParameters = btck_chain_parameters_create(3) else {
+        guard let chainParameters = btck_chain_parameters_create(btck_swift_btck_ChainType_SIGNET()) else {
             throw BitcoinKernelError.chainParametersCreationFailed
         }
         return chainParameters
@@ -1655,7 +1644,7 @@ final class LoadedBitcoinKernel {
 
         btck_call_context_options_set_notifications(
             btck_context_options_set_notifications_raw,
-            UnsafeMutableRawPointer(contextOptions),
+            contextOptions,
             callbacks
         )
     }
@@ -1674,7 +1663,7 @@ final class LoadedBitcoinKernel {
         // so a tiny C shim performs the ABI-sensitive call.
         btck_call_context_options_set_validation_interface(
             btck_context_options_set_validation_interface_raw,
-            UnsafeMutableRawPointer(contextOptions),
+            contextOptions,
             callbacks
         )
     }
@@ -1723,14 +1712,13 @@ private final class KernelNotificationSink {
         self.blockTipHandler = blockTipHandler
     }
 
-    func observeBlockTip(state: UInt8, entry: UnsafeRawPointer?, verificationProgress: Double) {
+    func observeBlockTip(state: UInt8, entry: OpaquePointer?, verificationProgress: Double) {
         guard let entry else {
             return
         }
 
-        let opaqueEntry = OpaquePointer(entry)
-        let height = Int(library.btck_block_tree_entry_get_height(opaqueEntry))
-        let hash = library.btck_block_tree_entry_get_block_hash(opaqueEntry).map(library.hexString(for:)) ?? ""
+        let height = Int(library.btck_block_tree_entry_get_height(entry))
+        let hash = library.btck_block_tree_entry_get_block_hash(entry).map(library.hexString(for:)) ?? ""
         blockTipHandler?(ChainTip(height: height, hash: hash))
     }
 
@@ -1823,16 +1811,13 @@ private final class KernelValidationSink {
         self.library = library
     }
 
-    func logBlockChecked(block: UnsafeMutableRawPointer?, state: UnsafeRawPointer?) {
+    func logBlockChecked(block: OpaquePointer?, state: OpaquePointer?) {
         let settings = BitcoinKernel.currentDisplayLogSettings()
         guard settings.isEnabled, settings.enabledCategories.contains(KernelLogSettings.kernelLogCategoryValidation) else {
             return
         }
 
-        guard
-            let block = block.map(OpaquePointer.init),
-            let state = state.map(OpaquePointer.init)
-        else {
+        guard let block, let state else {
             return
         }
 
@@ -1860,25 +1845,25 @@ private final class KernelValidationSink {
         }
     }
 
-    func logPoWValidBlock(block: UnsafeMutableRawPointer?, entry: UnsafeRawPointer?) {
+    func logPoWValidBlock(block: OpaquePointer?, entry: OpaquePointer?) {
         logBlockLifecycleEvent(prefix: "Kernel pow-valid block", block: block, entry: entry)
     }
 
-    func logBlockConnected(block: UnsafeMutableRawPointer?, entry: UnsafeRawPointer?) {
+    func logBlockConnected(block: OpaquePointer?, entry: OpaquePointer?) {
         logBlockLifecycleEvent(prefix: "Kernel block connected", block: block, entry: entry)
     }
 
-    func logBlockDisconnected(block: UnsafeMutableRawPointer?, entry: UnsafeRawPointer?) {
+    func logBlockDisconnected(block: OpaquePointer?, entry: OpaquePointer?) {
         logBlockLifecycleEvent(prefix: "Kernel block disconnected", block: block, entry: entry)
     }
 
-    private func logBlockLifecycleEvent(prefix: String, block: UnsafeMutableRawPointer?, entry: UnsafeRawPointer?) {
+    private func logBlockLifecycleEvent(prefix: String, block: OpaquePointer?, entry: OpaquePointer?) {
         let settings = BitcoinKernel.currentDisplayLogSettings()
         guard settings.isEnabled, settings.enabledCategories.contains(KernelLogSettings.kernelLogCategoryValidation) else {
             return
         }
 
-        let blockHash = block.map(OpaquePointer.init).flatMap(blockHashString(for:)) ?? "unavailable"
+        let blockHash = block.flatMap(blockHashString(for:)) ?? "unavailable"
         let (entryHeight, entryHash) = entryInfo(entry)
         BitcoinKernel.logger.info(
             "\(prefix, privacy: .public) hash \(blockHash, privacy: .public) entryHeight \(entryHeight, privacy: .public) entryHash \(entryHash, privacy: .public)"
@@ -1893,14 +1878,13 @@ private final class KernelValidationSink {
         return library.hexString(for: blockHash)
     }
 
-    private func entryInfo(_ entry: UnsafeRawPointer?) -> (Int, String) {
+    private func entryInfo(_ entry: OpaquePointer?) -> (Int, String) {
         guard let entry else {
             return (-1, "unavailable")
         }
 
-        let opaqueEntry = OpaquePointer(entry)
-        let height = Int(library.btck_block_tree_entry_get_height(opaqueEntry))
-        let blockHash = library.btck_block_tree_entry_get_block_hash(opaqueEntry).map(library.hexString(for:)) ?? "unavailable"
+        let height = Int(library.btck_block_tree_entry_get_height(entry))
+        let blockHash = library.btck_block_tree_entry_get_block_hash(entry).map(library.hexString(for:)) ?? "unavailable"
         return (height, blockHash)
     }
 

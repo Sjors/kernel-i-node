@@ -533,6 +533,7 @@
 		};
 		A28521732F65BEE300344857 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A2C000012F66100000344857 /* Node.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -553,6 +554,7 @@
 		};
 		A28521742F65BEE300344857 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A2C000012F66100000344857 /* Node.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
