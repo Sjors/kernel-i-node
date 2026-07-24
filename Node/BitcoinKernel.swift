@@ -827,6 +827,10 @@ final class BitcoinKernel {
             throw BitcoinKernelError.secondTransactionSpentOutputsMismatch(expected: inputCount, actual: spentOutputCount)
         }
 
+        guard library.btck_transaction_get_locktime(copiedTransaction) == library.btck_transaction_get_locktime(transaction) else {
+            throw BitcoinKernelError.secondTransactionInspectionFailed("The copied transaction locktime did not match the original.")
+        }
+
         var spentOutputs: [OpaquePointer?] = []
         spentOutputs.reserveCapacity(inputCount)
         defer {
@@ -845,6 +849,34 @@ final class BitcoinKernel {
                 throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to copy input \(inputIndex).")
             }
             defer { library.btck_transaction_input_destroy(input) }
+
+            // Input-level introspection: the copy must agree with the borrowed original.
+            guard library.btck_transaction_input_get_sequence(input) == library.btck_transaction_input_get_sequence(borrowedInput) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("The copied input sequence did not match for input \(inputIndex).")
+            }
+
+            let scriptSig = try serializeScriptSig(of: input)
+            guard scriptSig == (try serializeScriptSig(of: borrowedInput)) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("The copied input script sig did not match for input \(inputIndex).")
+            }
+
+            guard let borrowedWitnessStack = library.btck_transaction_input_get_witness_stack(input) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("Missing witness stack for input \(inputIndex).")
+            }
+            guard let witnessStack = library.btck_witness_stack_copy(borrowedWitnessStack) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to copy the witness stack for input \(inputIndex).")
+            }
+            defer { library.btck_witness_stack_destroy(witnessStack) }
+
+            let witnessItemCount = library.btck_witness_stack_count_items(witnessStack)
+            guard witnessItemCount == library.btck_witness_stack_count_items(borrowedWitnessStack) else {
+                throw BitcoinKernelError.secondTransactionInspectionFailed("The copied witness stack item count did not match for input \(inputIndex).")
+            }
+            for itemIndex in 0..<witnessItemCount {
+                guard try serializeWitnessItem(witnessStack, at: itemIndex) == serializeWitnessItem(borrowedWitnessStack, at: itemIndex) else {
+                    throw BitcoinKernelError.secondTransactionInspectionFailed("Witness item \(itemIndex) did not match after copying for input \(inputIndex).")
+                }
+            }
 
             guard let borrowedOutPoint = library.btck_transaction_input_get_out_point(input) else {
                 throw BitcoinKernelError.secondTransactionInspectionFailed("Missing outpoint for input \(inputIndex).")
@@ -990,6 +1022,40 @@ final class BitcoinKernel {
             throw BitcoinKernelError.blockSerializationFailed
         }
 
+        return collector.data
+    }
+
+    private func serializeScriptSig(of input: OpaquePointer) throws -> Data {
+        let collector = KernelByteCollector()
+        let result = library.btck_transaction_input_get_script_sig(
+            input,
+            Self.kernelWriteBytesCallback,
+            Unmanaged.passUnretained(collector).toOpaque()
+        )
+
+        guard result == 0 else {
+            throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to serialize an input script sig.")
+        }
+
+        // Unlike the other serializers, empty output is legitimate here: native
+        // segwit inputs have an empty script sig.
+        return collector.data
+    }
+
+    private func serializeWitnessItem(_ witnessStack: OpaquePointer, at index: Int) throws -> Data {
+        let collector = KernelByteCollector()
+        let result = library.btck_witness_stack_get_item_at(
+            witnessStack,
+            index,
+            Self.kernelWriteBytesCallback,
+            Unmanaged.passUnretained(collector).toOpaque()
+        )
+
+        guard result == 0 else {
+            throw BitcoinKernelError.secondTransactionInspectionFailed("Failed to serialize witness item \(index).")
+        }
+
+        // Empty items are valid: an empty push is a legitimate witness stack element.
         return collector.data
     }
 
@@ -1204,6 +1270,14 @@ final class LoadedBitcoinKernel {
     let btck_tx_validation_state_get_validation_mode: @convention(c) (OpaquePointer?) -> UInt8
     let btck_tx_validation_state_get_tx_validation_result: @convention(c) (OpaquePointer?) -> UInt32
     let btck_tx_validation_state_destroy: @convention(c) (OpaquePointer?) -> Void
+    let btck_transaction_get_locktime: @convention(c) (OpaquePointer?) -> UInt32
+    let btck_transaction_input_get_sequence: @convention(c) (OpaquePointer?) -> UInt32
+    let btck_transaction_input_get_script_sig: @convention(c) (OpaquePointer?, WriteBytesCallback?, UnsafeMutableRawPointer?) -> Int32
+    let btck_transaction_input_get_witness_stack: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_witness_stack_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
+    let btck_witness_stack_count_items: @convention(c) (OpaquePointer?) -> Int
+    let btck_witness_stack_get_item_at: @convention(c) (OpaquePointer?, Int, WriteBytesCallback?, UnsafeMutableRawPointer?) -> Int32
+    let btck_witness_stack_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_chain_parameters_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_chain_parameters_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_context_options_create: @convention(c) () -> OpaquePointer?
@@ -1359,6 +1433,14 @@ final class LoadedBitcoinKernel {
         btck_tx_validation_state_get_validation_mode = try loadSymbol("btck_tx_validation_state_get_validation_mode")
         btck_tx_validation_state_get_tx_validation_result = try loadSymbol("btck_tx_validation_state_get_tx_validation_result")
         btck_tx_validation_state_destroy = try loadSymbol("btck_tx_validation_state_destroy")
+        btck_transaction_get_locktime = try loadSymbol("btck_transaction_get_locktime")
+        btck_transaction_input_get_sequence = try loadSymbol("btck_transaction_input_get_sequence")
+        btck_transaction_input_get_script_sig = try loadSymbol("btck_transaction_input_get_script_sig")
+        btck_transaction_input_get_witness_stack = try loadSymbol("btck_transaction_input_get_witness_stack")
+        btck_witness_stack_copy = try loadSymbol("btck_witness_stack_copy")
+        btck_witness_stack_count_items = try loadSymbol("btck_witness_stack_count_items")
+        btck_witness_stack_get_item_at = try loadSymbol("btck_witness_stack_get_item_at")
+        btck_witness_stack_destroy = try loadSymbol("btck_witness_stack_destroy")
         btck_chain_parameters_copy = try loadSymbol("btck_chain_parameters_copy")
         btck_chain_parameters_destroy = try loadSymbol("btck_chain_parameters_destroy")
         btck_context_options_create = try loadSymbol("btck_context_options_create")

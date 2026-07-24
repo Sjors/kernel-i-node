@@ -9,6 +9,21 @@ import Foundation
 import Testing
 @testable import Node
 
+private final class TestByteCollector {
+    var data = Data()
+}
+
+private let testWriteBytesCallback: @convention(c) (UnsafeRawPointer?, Int, UnsafeMutableRawPointer?) -> Int32 = { bytes, size, userData in
+    guard let userData else {
+        return 1
+    }
+    let collector = Unmanaged<TestByteCollector>.fromOpaque(userData).takeUnretainedValue()
+    if let bytes, size > 0 {
+        collector.data.append(contentsOf: UnsafeRawBufferPointer(start: bytes, count: size))
+    }
+    return 0
+}
+
 struct NodeTests {
     @Test func syncSnapshotProgressFractionUsesRemoteHeight() async throws {
         let snapshot = SyncSnapshot(
@@ -129,6 +144,49 @@ struct NodeTests {
         #expect(library.btck_tx_validation_state_get_validation_mode(invalidState) == 1)
         // btck_TxValidationResult_CONSENSUS
         #expect(library.btck_tx_validation_state_get_tx_validation_result(invalidState) == 1)
+    }
+
+    @Test func transactionIntrospectionExposesLocktimeSequenceScriptSigAndWitness() async throws {
+        let library = try LoadedBitcoinKernel()
+
+        // Hand-crafted segwit transaction: one input (empty scriptSig, sequence fffffffe,
+        // witness items [aa, beef]), one OP_TRUE output, locktime 0x01020304.
+        let rawTransactionHex =
+            "02000000" + "0001" +
+            "01" + String(repeating: "11", count: 32) + "00000000" + "00" + "feffffff" +
+            "01" + "0000000000000000" + "01" + "51" +
+            "02" + "01aa" + "02beef" +
+            "04030201"
+        let rawTransaction = try #require(SignetSettings.data(fromHex: rawTransactionHex))
+        let transaction = try #require(rawTransaction.withUnsafeBytes {
+            library.btck_transaction_create($0.baseAddress, $0.count)
+        })
+        defer { library.btck_transaction_destroy(transaction) }
+
+        #expect(library.btck_transaction_get_locktime(transaction) == 0x01020304)
+
+        let input = try #require(library.btck_transaction_get_input_at(transaction, 0))
+        #expect(library.btck_transaction_input_get_sequence(input) == 0xfffffffe)
+
+        let scriptSigCollector = TestByteCollector()
+        #expect(library.btck_transaction_input_get_script_sig(
+            input, testWriteBytesCallback, Unmanaged.passUnretained(scriptSigCollector).toOpaque()
+        ) == 0)
+        #expect(scriptSigCollector.data.isEmpty)
+
+        let witnessStack = try #require(library.btck_transaction_input_get_witness_stack(input))
+        let copiedWitnessStack = try #require(library.btck_witness_stack_copy(witnessStack))
+        defer { library.btck_witness_stack_destroy(copiedWitnessStack) }
+        #expect(library.btck_witness_stack_count_items(copiedWitnessStack) == 2)
+
+        let expectedItems: [Data] = [Data([0xaa]), Data([0xbe, 0xef])]
+        for (index, expectedItem) in expectedItems.enumerated() {
+            let collector = TestByteCollector()
+            #expect(library.btck_witness_stack_get_item_at(
+                copiedWitnessStack, index, testWriteBytesCallback, Unmanaged.passUnretained(collector).toOpaque()
+            ) == 0)
+            #expect(collector.data == expectedItem)
+        }
     }
 
     @Test func inMemoryKernelWithDefaultChallengeMatchesDefaultSignetGenesis() async throws {
