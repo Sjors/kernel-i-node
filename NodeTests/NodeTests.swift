@@ -114,8 +114,6 @@ struct NodeTests {
     }
 
     @Test func transactionCheckAcceptsGenesisCoinbaseAndRejectsOutputlessTransaction() async throws {
-        let library = try LoadedBitcoinKernel()
-
         // The genesis coinbase transaction (shared by all networks, including signet).
         let genesisCoinbaseHex =
             "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff4d04ffff001d010445" +
@@ -125,36 +123,34 @@ struct NodeTests {
             "00000000"
         let validBytes = try #require(SignetSettings.data(fromHex: genesisCoinbaseHex))
         let validTransaction = try #require(validBytes.withUnsafeBytes {
-            library.btck_transaction_create($0.baseAddress, $0.count)
+            btck_transaction_create($0.baseAddress, $0.count)
         })
-        defer { library.btck_transaction_destroy(validTransaction) }
+        defer { btck_transaction_destroy(validTransaction) }
 
-        let validState = try #require(library.btck_tx_validation_state_create())
-        defer { library.btck_tx_validation_state_destroy(validState) }
-        #expect(library.btck_transaction_check(validTransaction, validState) == 1)
-        #expect(library.btck_tx_validation_state_get_validation_mode(validState) == 0)
-        #expect(library.btck_tx_validation_state_get_tx_validation_result(validState) == 0)
+        let validState = try #require(btck_tx_validation_state_create())
+        defer { btck_tx_validation_state_destroy(validState) }
+        #expect(btck_transaction_check(validTransaction, validState) == 1)
+        #expect(btck_tx_validation_state_get_validation_mode(validState) == 0)
+        #expect(btck_tx_validation_state_get_tx_validation_result(validState) == 0)
 
         // One input, no outputs: parses fine but violates consensus (bad-txns-vout-empty).
         let outputlessHex =
             "0200000001" + String(repeating: "0", count: 64) + "00000000" + "00" + "ffffffff" + "00" + "00000000"
         let invalidBytes = try #require(SignetSettings.data(fromHex: outputlessHex))
         let invalidTransaction = try #require(invalidBytes.withUnsafeBytes {
-            library.btck_transaction_create($0.baseAddress, $0.count)
+            btck_transaction_create($0.baseAddress, $0.count)
         })
-        defer { library.btck_transaction_destroy(invalidTransaction) }
+        defer { btck_transaction_destroy(invalidTransaction) }
 
-        let invalidState = try #require(library.btck_tx_validation_state_create())
-        defer { library.btck_tx_validation_state_destroy(invalidState) }
-        #expect(library.btck_transaction_check(invalidTransaction, invalidState) == 0)
-        #expect(library.btck_tx_validation_state_get_validation_mode(invalidState) == 1)
+        let invalidState = try #require(btck_tx_validation_state_create())
+        defer { btck_tx_validation_state_destroy(invalidState) }
+        #expect(btck_transaction_check(invalidTransaction, invalidState) == 0)
+        #expect(btck_tx_validation_state_get_validation_mode(invalidState) == 1)
         // btck_TxValidationResult_CONSENSUS
-        #expect(library.btck_tx_validation_state_get_tx_validation_result(invalidState) == 1)
+        #expect(btck_tx_validation_state_get_tx_validation_result(invalidState) == 1)
     }
 
     @Test func transactionIntrospectionExposesLocktimeSequenceScriptSigAndWitness() async throws {
-        let library = try LoadedBitcoinKernel()
-
         // Hand-crafted segwit transaction: one input (empty scriptSig, sequence fffffffe,
         // witness items [aa, beef]), one OP_TRUE output, locktime 0x01020304.
         let rawTransactionHex =
@@ -165,30 +161,30 @@ struct NodeTests {
             "04030201"
         let rawTransaction = try #require(SignetSettings.data(fromHex: rawTransactionHex))
         let transaction = try #require(rawTransaction.withUnsafeBytes {
-            library.btck_transaction_create($0.baseAddress, $0.count)
+            btck_transaction_create($0.baseAddress, $0.count)
         })
-        defer { library.btck_transaction_destroy(transaction) }
+        defer { btck_transaction_destroy(transaction) }
 
-        #expect(library.btck_transaction_get_locktime(transaction) == 0x01020304)
+        #expect(btck_transaction_get_locktime(transaction) == 0x01020304)
 
-        let input = try #require(library.btck_transaction_get_input_at(transaction, 0))
-        #expect(library.btck_transaction_input_get_sequence(input) == 0xfffffffe)
+        let input = try #require(btck_transaction_get_input_at(transaction, 0))
+        #expect(btck_transaction_input_get_sequence(input) == 0xfffffffe)
 
         let scriptSigCollector = TestByteCollector()
-        #expect(library.btck_transaction_input_get_script_sig(
+        #expect(btck_transaction_input_get_script_sig(
             input, testWriteBytesCallback, Unmanaged.passUnretained(scriptSigCollector).toOpaque()
         ) == 0)
         #expect(scriptSigCollector.data.isEmpty)
 
-        let witnessStack = try #require(library.btck_transaction_input_get_witness_stack(input))
-        let copiedWitnessStack = try #require(library.btck_witness_stack_copy(witnessStack))
-        defer { library.btck_witness_stack_destroy(copiedWitnessStack) }
-        #expect(library.btck_witness_stack_count_items(copiedWitnessStack) == 2)
+        let witnessStack = try #require(btck_transaction_input_get_witness_stack(input))
+        let copiedWitnessStack = try #require(btck_witness_stack_copy(witnessStack))
+        defer { btck_witness_stack_destroy(copiedWitnessStack) }
+        #expect(btck_witness_stack_count_items(copiedWitnessStack) == 2)
 
         let expectedItems: [Data] = [Data([0xaa]), Data([0xbe, 0xef])]
         for (index, expectedItem) in expectedItems.enumerated() {
             let collector = TestByteCollector()
-            #expect(library.btck_witness_stack_get_item_at(
+            #expect(btck_witness_stack_get_item_at(
                 copiedWitnessStack, index, testWriteBytesCallback, Unmanaged.passUnretained(collector).toOpaque()
             ) == 0)
             #expect(collector.data == expectedItem)

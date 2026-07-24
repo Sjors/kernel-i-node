@@ -7,7 +7,7 @@ step="initializing"
 on_error() {
   local status="$1"
   echo "error: libbitcoinkernel ${step} failed for ${platform:-unknown platform} (exit ${status})." >&2
-  echo "error: Inspect the 'Embed libbitcoinkernel' build phase log for details." >&2
+  echo "error: Inspect the 'Build and embed libbitcoinkernel' build phase log for details." >&2
   exit "${status}"
 }
 

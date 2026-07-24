@@ -4,7 +4,8 @@ This project is a SwiftUI proof of concept for feeding signet blocks from mempoo
 
 ![Node app screenshot](screenshot.png)
 
-The Xcode build automatically configures, builds, installs, and embeds the right `libbitcoinkernel` variant for macOS, iPhone Simulator, or iPhone.
+The Xcode build automatically configures, builds, installs, links, and embeds
+the right `libbitcoinkernel` variant for macOS, iPhone Simulator, or iPhone.
 
 ## Prerequisites
 
@@ -49,10 +50,11 @@ Open `Node.xcodeproj` in Xcode and build/run the `Node` target.
 
 During the build, Xcode calls [embed-libbitcoinkernel.sh](scripts/embed-libbitcoinkernel.sh), which in turn uses [build-libbitcoinkernel.sh](scripts/build-libbitcoinkernel.sh) to:
 
-- configures a kernel-only Bitcoin Core build for the current platform
-- builds `libbitcoinkernel`
-- installs it into Xcode's DerivedData area
-- embeds the matching dylib into the app bundle's `Frameworks` directory
+- configure a kernel-only Bitcoin Core build for the current platform
+- build `libbitcoinkernel`
+- install it into Xcode's DerivedData area
+- link the app against the matching dylib and embed it into the app bundle's
+  `Frameworks` directory
 
 For iPhone builds you will also need normal Xcode signing and provisioning for your device.
 
