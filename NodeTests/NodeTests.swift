@@ -42,6 +42,12 @@ struct NodeTests {
         #expect(path.contains("/Node/kernel-signet"))
     }
 
+    @Test func nodeViewModelDoesNotAutoStartInPreviewOrTestHosts() async throws {
+        #expect(NodeViewModel.shouldAutoStart(environment: [:]))
+        #expect(!NodeViewModel.shouldAutoStart(environment: ["XCODE_RUNNING_FOR_PREVIEWS": "1"]))
+        #expect(!NodeViewModel.shouldAutoStart(environment: ["XCTestConfigurationFilePath": "/tmp/test.xctestconfiguration"]))
+    }
+
     /// The default signet challenge from Bitcoin Core's chainparams.cpp. Passing it through the
     /// custom-signet path must accept the same chain as the built-in signet parameters.
     static let defaultSignetChallengeHex =

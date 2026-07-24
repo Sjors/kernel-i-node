@@ -94,7 +94,17 @@ final class NodeViewModel {
     }
 
     func startIfNeeded() {
+        guard Self.shouldAutoStart(environment: ProcessInfo.processInfo.environment) else {
+            Self.logger.info("Skipping automatic sync start in preview or test environment")
+            return
+        }
+
         Task { await reconcileSyncState() }
+    }
+
+    nonisolated static func shouldAutoStart(environment: [String: String]) -> Bool {
+        environment["XCODE_RUNNING_FOR_PREVIEWS"] != "1" &&
+        environment["XCTestConfigurationFilePath"] == nil
     }
 
     func prepareForTermination() async {
