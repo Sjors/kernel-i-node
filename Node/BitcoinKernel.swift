@@ -1363,7 +1363,7 @@ final class BitcoinKernel {
         return contextOptions
     }
 
-    fileprivate static func hexString(for blockHash: OpaquePointer) -> String {
+    nonisolated fileprivate static func hexString(for blockHash: OpaquePointer) -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
         btck_block_hash_to_bytes(blockHash, &bytes)
         return bytes.reversed().map { String(format: "%02x", $0) }.joined()
