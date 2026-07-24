@@ -14,6 +14,15 @@ private let kernelValidationModeValid = btck_swift_btck_ValidationMode_VALID()
 private let kernelValidationModeInvalid = btck_swift_btck_ValidationMode_INVALID()
 private let kernelValidationModeInternalError = btck_swift_btck_ValidationMode_INTERNAL_ERROR()
 private let kernelBlockCheckFlagsAll = btck_swift_btck_BlockCheckFlags_ALL()
+private let kernelBlockValidationResultUnset = btck_swift_btck_BlockValidationResult_UNSET()
+private let kernelBlockValidationResultConsensus = btck_swift_btck_BlockValidationResult_CONSENSUS()
+private let kernelBlockValidationResultCachedInvalid = btck_swift_btck_BlockValidationResult_CACHED_INVALID()
+private let kernelBlockValidationResultInvalidHeader = btck_swift_btck_BlockValidationResult_INVALID_HEADER()
+private let kernelBlockValidationResultMutated = btck_swift_btck_BlockValidationResult_MUTATED()
+private let kernelBlockValidationResultMissingPrev = btck_swift_btck_BlockValidationResult_MISSING_PREV()
+private let kernelBlockValidationResultInvalidPrev = btck_swift_btck_BlockValidationResult_INVALID_PREV()
+private let kernelBlockValidationResultTimeFuture = btck_swift_btck_BlockValidationResult_TIME_FUTURE()
+private let kernelBlockValidationResultHeaderLowWork = btck_swift_btck_BlockValidationResult_HEADER_LOW_WORK()
 private let kernelTxValidationResultUnset = btck_swift_btck_TxValidationResult_UNSET()
 private let kernelScriptVerifyStatusOK = btck_swift_btck_ScriptVerifyStatus_OK()
 private let kernelScriptVerificationFlagsAll = btck_swift_btck_ScriptVerificationFlags_ALL()
@@ -704,7 +713,8 @@ final class BitcoinKernel {
         // verdict back to the original gives the helper a concrete role instead of dead coverage.
         let copiedValidationMode = btck_block_validation_state_get_validation_mode(validationStateCopy)
         let copiedValidationResult = btck_block_validation_state_get_block_validation_result(validationStateCopy)
-        guard copiedValidationMode == validationMode, copiedValidationResult == 0 else {
+        guard copiedValidationMode == validationMode,
+              copiedValidationResult == kernelBlockValidationResultUnset else {
             throw BitcoinKernelError.blockInspectionFailed("Copied block validation state did not preserve the valid verdict.")
         }
     }
@@ -1549,23 +1559,23 @@ private final class KernelValidationSink {
 
     private func validationResultDescription(_ result: UInt32) -> String {
         switch result {
-        case 0:
+        case kernelBlockValidationResultUnset:
             return "unset"
-        case 1:
+        case kernelBlockValidationResultConsensus:
             return "consensus"
-        case 2:
+        case kernelBlockValidationResultCachedInvalid:
             return "cached_invalid"
-        case 3:
+        case kernelBlockValidationResultInvalidHeader:
             return "invalid_header"
-        case 4:
+        case kernelBlockValidationResultMutated:
             return "mutated"
-        case 5:
+        case kernelBlockValidationResultMissingPrev:
             return "missing_prev"
-        case 6:
+        case kernelBlockValidationResultInvalidPrev:
             return "invalid_prev"
-        case 7:
+        case kernelBlockValidationResultTimeFuture:
             return "time_future"
-        case 8:
+        case kernelBlockValidationResultHeaderLowWork:
             return "header_low_work"
         default:
             return "unknown(\(result))"

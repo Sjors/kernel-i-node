@@ -130,8 +130,14 @@ struct NodeTests {
         let validState = try #require(btck_tx_validation_state_create())
         defer { btck_tx_validation_state_destroy(validState) }
         #expect(btck_transaction_check(validTransaction, validState) == 1)
-        #expect(btck_tx_validation_state_get_validation_mode(validState) == 0)
-        #expect(btck_tx_validation_state_get_tx_validation_result(validState) == 0)
+        #expect(
+            btck_tx_validation_state_get_validation_mode(validState) ==
+            btck_swift_btck_ValidationMode_VALID()
+        )
+        #expect(
+            btck_tx_validation_state_get_tx_validation_result(validState) ==
+            btck_swift_btck_TxValidationResult_UNSET()
+        )
 
         // One input, no outputs: parses fine but violates consensus (bad-txns-vout-empty).
         let outputlessHex =
@@ -145,9 +151,14 @@ struct NodeTests {
         let invalidState = try #require(btck_tx_validation_state_create())
         defer { btck_tx_validation_state_destroy(invalidState) }
         #expect(btck_transaction_check(invalidTransaction, invalidState) == 0)
-        #expect(btck_tx_validation_state_get_validation_mode(invalidState) == 1)
-        // btck_TxValidationResult_CONSENSUS
-        #expect(btck_tx_validation_state_get_tx_validation_result(invalidState) == 1)
+        #expect(
+            btck_tx_validation_state_get_validation_mode(invalidState) ==
+            btck_swift_btck_ValidationMode_INVALID()
+        )
+        #expect(
+            btck_tx_validation_state_get_tx_validation_result(invalidState) ==
+            btck_swift_btck_TxValidationResult_CONSENSUS()
+        )
     }
 
     @Test func transactionIntrospectionExposesLocktimeSequenceScriptSigAndWitness() async throws {
