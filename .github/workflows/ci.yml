@@ -21,7 +21,7 @@ jobs:
         run: brew install cmake ninja boost pkgconf ccache
 
       - name: Restore ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-${{ runner.os }}-${{ hashFiles('Node.xcodeproj/project.pbxproj', 'scripts/build-libbitcoinkernel.sh', '.github/workflows/ci.yml') }}
