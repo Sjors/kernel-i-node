@@ -189,6 +189,31 @@ struct NodeTests {
         }
     }
 
+    @Test func blockHeaderParsingRoundTripsAndExposesFields() async throws {
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let kernel = try BitcoinKernel(storageRoot: tmp, inMemory: true)
+
+        // Crafted 80-byte header with known little-endian field values.
+        let rawHeaderHex =
+            "20000000" +
+            String(repeating: "aa", count: 32) +
+            String(repeating: "bb", count: 32) +
+            "78563412" +
+            "ae77031e" +
+            "efbeadde"
+        let rawHeader = try #require(SignetSettings.data(fromHex: rawHeaderHex))
+
+        // blockHeader(from:) internally serializes the parsed header back through
+        // btck_block_header_to_bytes and requires an exact byte match.
+        let header = try kernel.blockHeader(from: rawHeader)
+        #expect(header.version == 0x20)
+        #expect(header.timestamp == 0x12345678)
+        #expect(header.bits == 0x1e0377ae)
+        #expect(header.nonce == 0xdeadbeef)
+        #expect(header.previousHash == String(repeating: "aa", count: 32))
+    }
+
     @Test func inMemoryKernelWithDefaultChallengeMatchesDefaultSignetGenesis() async throws {
         let challenge = try #require(SignetSettings.data(fromHex: Self.defaultSignetChallengeHex))
 

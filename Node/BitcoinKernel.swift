@@ -74,6 +74,7 @@ enum BitcoinKernelError: LocalizedError {
     case chainstateReindexFailed(Int32)
     case blockTooShort(Int)
     case blockHeaderCreationFailed
+    case blockHeaderSerializationMismatch
     case blockHeaderHashUnavailable
     case blockHeaderHashMismatch(expected: String, actual: String)
     case blockHeaderProcessingFailed(Int32)
@@ -140,6 +141,8 @@ enum BitcoinKernelError: LocalizedError {
             return "Raw block is too short to contain a header (\(byteCount) bytes)."
         case .blockHeaderCreationFailed:
             return "Failed to parse raw block header bytes."
+        case .blockHeaderSerializationMismatch:
+            return "Serialized block header bytes did not match the original raw header."
         case .blockHeaderHashUnavailable:
             return "Failed to read block header hash."
         case let .blockHeaderHashMismatch(expected, actual):
@@ -603,6 +606,13 @@ final class BitcoinKernel {
             return header
         }
         defer { library.btck_block_header_destroy(header) }
+
+        // The parsed header must serialize back to the exact bytes it came from.
+        var serializedHeader = [UInt8](repeating: 0, count: Self.serializedBlockHeaderLength)
+        guard library.btck_block_header_to_bytes(header, &serializedHeader) == 0,
+              Data(serializedHeader) == rawHeader else {
+            throw BitcoinKernelError.blockHeaderSerializationMismatch
+        }
 
         guard let blockHash = library.btck_block_header_get_hash(header) else {
             throw BitcoinKernelError.blockHeaderHashUnavailable
@@ -1327,6 +1337,7 @@ final class LoadedBitcoinKernel {
     let btck_block_header_get_bits: @convention(c) (OpaquePointer?) -> UInt32
     let btck_block_header_get_version: @convention(c) (OpaquePointer?) -> Int32
     let btck_block_header_get_nonce: @convention(c) (OpaquePointer?) -> UInt32
+    let btck_block_header_to_bytes: @convention(c) (OpaquePointer?, UnsafeMutablePointer<UInt8>?) -> Int32
     let btck_block_header_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_block_validation_state_create: @convention(c) () -> OpaquePointer?
     let btck_block_validation_state_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
@@ -1491,6 +1502,7 @@ final class LoadedBitcoinKernel {
         btck_block_header_get_bits = try loadSymbol("btck_block_header_get_bits")
         btck_block_header_get_version = try loadSymbol("btck_block_header_get_version")
         btck_block_header_get_nonce = try loadSymbol("btck_block_header_get_nonce")
+        btck_block_header_to_bytes = try loadSymbol("btck_block_header_to_bytes")
         btck_block_header_destroy = try loadSymbol("btck_block_header_destroy")
         btck_block_validation_state_create = try loadSymbol("btck_block_validation_state_create")
         btck_block_validation_state_copy = try loadSymbol("btck_block_validation_state_copy")
