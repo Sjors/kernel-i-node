@@ -1148,7 +1148,7 @@ final class BitcoinKernel {
         var blockHashBytes = [UInt8](repeating: 0, count: 32)
         library.btck_block_hash_to_bytes(copiedBlockHash, &blockHashBytes)
         guard let recreatedBlockHash = blockHashBytes.withUnsafeBufferPointer({
-            library.btck_block_hash_create($0.baseAddress)
+            library.btck_block_hash_create($0.baseAddress!)
         }) else {
             throw BitcoinKernelError.blockInspectionFailed("Failed to recreate the processed block hash from bytes.")
         }
