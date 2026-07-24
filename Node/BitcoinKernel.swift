@@ -654,15 +654,10 @@ final class BitcoinKernel {
     }
 
     private func process(header: OpaquePointer) throws {
-        guard let validationState = library.btck_block_validation_state_create() else {
+        guard let validationState = library.btck_chainstate_manager_process_block_header(chainstateManager, header) else {
             throw BitcoinKernelError.blockHeaderProcessingFailed(-1)
         }
         defer { library.btck_block_validation_state_destroy(validationState) }
-
-        let result = library.btck_chainstate_manager_process_block_header(chainstateManager, header, validationState)
-        guard result == 0 else {
-            throw BitcoinKernelError.blockHeaderProcessingFailed(result)
-        }
 
         let validationMode = library.btck_block_validation_state_get_validation_mode(validationState)
         guard validationMode == kernelValidationModeValid else {
@@ -1216,7 +1211,7 @@ private final class LoadedBitcoinKernel {
     let btck_transaction_output_get_amount: @convention(c) (OpaquePointer?) -> Int64
     let btck_transaction_output_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_transaction_output_destroy: @convention(c) (OpaquePointer?) -> Void
-    let btck_chainstate_manager_process_block_header: @convention(c) (OpaquePointer?, OpaquePointer?, OpaquePointer?) -> Int32
+    let btck_chainstate_manager_process_block_header: @convention(c) (OpaquePointer?, OpaquePointer?) -> OpaquePointer?
     let btck_chainstate_manager_process_block: @convention(c) (OpaquePointer?, OpaquePointer?, UnsafeMutablePointer<Int32>?) -> Int32
     let btck_chainstate_manager_get_block_tree_entry_by_hash: @convention(c) (OpaquePointer?, OpaquePointer?) -> OpaquePointer?
     let btck_block_spent_outputs_read: @convention(c) (OpaquePointer?, OpaquePointer?) -> OpaquePointer?
