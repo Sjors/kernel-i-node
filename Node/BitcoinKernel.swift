@@ -973,7 +973,7 @@ final class BitcoinKernel {
             spentOutputs.append(recreatedSpentOutput)
         }
 
-        let precomputedTransactionData = spentOutputs.withUnsafeBufferPointer { spentOutputsBuffer in
+        let precomputedTransactionData = spentOutputs.withUnsafeMutableBufferPointer { spentOutputsBuffer in
             library.btck_precomputed_transaction_data_create(copiedTransaction, spentOutputsBuffer.baseAddress, spentOutputsBuffer.count)
         }
         guard let precomputedTransactionData else {
@@ -1367,7 +1367,7 @@ final class LoadedBitcoinKernel {
     let btck_transaction_count_inputs: @convention(c) (OpaquePointer?) -> Int
     let btck_transaction_get_txid: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_transaction_destroy: @convention(c) (OpaquePointer?) -> Void
-    let btck_precomputed_transaction_data_create: @convention(c) (OpaquePointer?, UnsafePointer<OpaquePointer?>?, Int) -> OpaquePointer?
+    let btck_precomputed_transaction_data_create: @convention(c) (OpaquePointer?, UnsafeMutablePointer<OpaquePointer?>?, Int) -> OpaquePointer?
     let btck_precomputed_transaction_data_copy: @convention(c) (OpaquePointer?) -> OpaquePointer?
     let btck_precomputed_transaction_data_destroy: @convention(c) (OpaquePointer?) -> Void
     let btck_script_pubkey_verify: @convention(c) (OpaquePointer?, Int64, OpaquePointer?, OpaquePointer?, UInt32, UInt32, UnsafeMutablePointer<UInt8>?) -> Int32
