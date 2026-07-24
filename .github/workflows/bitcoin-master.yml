@@ -1,0 +1,52 @@
+name: Bitcoin Core master compatibility
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build against bitcoin/master
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Clone Bitcoin Core master
+        run: git clone --depth=1 --branch=master https://github.com/bitcoin/bitcoin.git bitcoin-core
+
+      - name: Record Bitcoin Core revision
+        id: bitcoin_core
+        run: |
+          revision="$(git -C bitcoin-core rev-parse HEAD)"
+          echo "sha=${revision}" >> "$GITHUB_OUTPUT"
+          echo "Building against bitcoin/bitcoin@${revision}" >> "$GITHUB_STEP_SUMMARY"
+          git -C bitcoin-core log -1 --oneline
+
+      - name: Install build dependencies
+        run: brew install cmake ninja boost pkgconf ccache
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-bitcoin-master-${{ runner.os }}-${{ steps.bitcoin_core.outputs.sha }}-${{ hashFiles('Node.xcodeproj/project.pbxproj', 'scripts/build-libbitcoinkernel.sh', '.github/workflows/bitcoin-master.yml') }}
+          restore-keys: |
+            ccache-bitcoin-master-${{ runner.os }}-
+
+      - name: Build macOS app
+        run: |
+          xcodebuild build \
+            -project Node.xcodeproj \
+            -scheme Node \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData-Bitcoin-Master" \
+            CODE_SIGNING_ALLOWED=NO
